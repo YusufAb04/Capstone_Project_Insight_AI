@@ -1,0 +1,101 @@
+Work Integrated Learning – Project 
+Peer review form
+
+To complete your peer review, you need to:
+1.	Perform a self-review of your own performance. (see section 1 below)
+2.	Write a review for each team member (see section 2 below).
+3.	Obtain written review about you from your team member (see section 3 below).
+4.	Write a reflection (see section 4 below).
+
+1. Self-review
+Review your own performance by describing the following:
+1.	What is your role in this team?
+2.	What is your contribution so far (both in terms of quantity and quality)?
+3.	Comment on your professional conduct e.g. make yourself available for meetings, shows up to meeting (on time), respect other team members, willingness to help, positive attitude, provide constructive feedback, submit on time etc.
+4.	How can you do better? How can you better contribute to the team?
+
+5.	Rate your performance out of 10.
+Write your self-review below.
+Your name: Muhammad Haekal Adlan Budiman
+1. My main role is documentation specialist and also technical backup and software development. In this capacity, I am responsible for maintaining clear and structured records of the project’s progress, ensuring all technical documentation is accurate and up to date. I also provide development support to the team when needed.
+2. So far, I have completed most of Section 5: Requirements and Technical Stack. This included researching and documenting the relevant technologies, outlining the system requirements, and ensuring the content aligned with the overall project proposal. I also contributed to reviewing other sections to maintain consistency throughout the document.
+3. I am consistently available for team meetings and make it a priority to show up prepared and on time. I treat all team members with respect and maintain a positive and collaborative attitude throughout the project. I actively offer help when others need it and aim to provide feedback that is thoughtful and constructive.
+4. I would like to become more involved in the technical aspects of the project, such as contributing to the development and implementation work. Building on my technical skills will allow me to take on a more active role in areas beyond documentation and better support the team’s overall delivery.
+5. 10
+
+
+2.1 Review Team members
+Review each of your team member by describe the following for each team member:
+1.	What is this team member’s role?
+2.	What is this team members contribution so far (both in terms of quantity and quality)? 
+3.	Comment on this team member’s professional conduct e.g. make him/herself available for meetings, shows up to meeting (on time), respect other team members, willingness to help, positive attitude, provide constructive feedback, submit on time etc.
+4.	Provide any constructive suggestion for this team member on how s/he could better contribute to the team.
+5.	Rate this team member out of 10.
+
+-----------------
+Reviewer’s name: Muhammad Haekal Adlan Budiman
+Reviewee’s name: Lucas Caulley
+1. Project Manager
+2. As a project manager, he has contributed across most areas of the project, including arranging meetings with the client, managing and delegating tasks to team members, ensuring the project stays on track, and contributing to documentation. He has been proactive in keeping the team aligned and maintaining clear communication throughout.
+3. He demonstrates a strong response time when it comes to team communications and is always prompt in addressing questions or concerns. He treats all team members with respect and creates a supportive environment where everyone feels comfortable contributing. He is also willing to assist others and goes out of his way to ensure the team succeeds as a whole.
+4. One area for improvement would be to continue distributing tasks more evenly across the team to help maintain a balanced workload. Establishing clearer check-in points and deadlines could further strengthen the team’s accountability and help prevent bottlenecks as the project progresses.
+5. 10
+-------------------------------
+Reviewer’s name: Muhammad Haekal Adlan Budiman	
+Reviewee’s name: Chris Chiparaushe  
+1. His main role is quality assurance and testing, with software development as a secondary responsibility. In this role, he is responsible for ensuring the project meets quality standards by identifying potential issues early and validating that deliverables align with the project requirements.
+2. He has completed the quality assurance strategies section for the project proposal, outlining the testing approach and quality benchmarks for the project. His work in this area has helped the team establish a clear framework for maintaining quality throughout the development process.
+3. He has been actively involved in helping the team finalise the project proposal, consistently attending meetings and contributing to group discussions. He is reliable in showing up to class and team sessions, and demonstrates a genuine willingness to support others when needed.
+4. An area for growth would be to take a more proactive role in the testing and review process throughout the project lifecycle, rather than primarily at key milestones. Engaging more closely with the development side could also help him identify quality issues earlier and provide more targeted feedback.	
+5.  10
+-------------------------------
+Reviewer’s name: Muhammad Haekal Adlan Budiman
+Reviewee’s name: Thong
+1. His main role is AI Lead, with software development as his secondary responsibility. In this capacity, he is responsible for guiding the team’s approach to AI integration, overseeing the design and implementation of AI components, and contributing to the broader technical development of the platform.
+2. He has contributed significantly to building the prototype of the platform and has been involved in most of the core development work. His technical contributions have been central to moving the project forward and demonstrating its practical feasibility.
+3. He is consistently available for team meetings and actively participates in group discussions. He approaches the team with a collaborative mindset and is always willing to offer support or share his technical knowledge when other team members need assistance.
+4. Attending class sessions more regularly would help him stay aligned with the team’s progress and any updates discussed in person. Greater in-class presence would also allow him to engage more directly with the team and contribute to real-time decision-making.	
+5. 10
+
+
+Reviewer’s name:
+Reviewee’s name: Thanasin Keardsang 
+1. His main role is client liaison, with software development backup and documentation as secondary responsibilities. In this role, he acts as a key point of contact between the team and the client, facilitating communication and ensuring that client expectations are understood and reflected in the project deliverables.
+2. He has contributed to several key sections of the project proposal document, including the introduction, risk management, and team organisation documentation. His work has helped ensure the proposal is well-structured and covers important foundational elements of the project.
+3. He played an active role in helping the team incorporate and address the client’s feedback, ensuring revisions were completed in a timely manner. He is reliable in attending team meetings and class sessions, and consistently demonstrates a willingness to contribute wherever the team needs support.
+4. One area for improvement would be to take a more visible role in client-facing interactions and meetings, given his role as client liaison. Strengthening his communication skills in this area and proactively sharing client updates with the team could help improve overall project alignment.
+5. 10
+
+Reviewer’s name: 
+Reviewee’s name: Yusuf Abushaaban 
+1. His main role is Technical Lead and Quality Assurance. In this position, he provides technical direction for the project and is responsible for ensuring that the work produced meets the required quality standards. He also plays a key role in reviewing deliverables and guiding technical decisions across the team.
+2. He has been instrumental in revising and updating the documentation following feedback received from the client. His ability to translate client comments into clear and structured written content has contributed to the overall quality and professionalism of the project proposal.
+3. He has been a reliable presence throughout the project, consistently attending team meetings and class sessions. He actively contributes to completing tasks and is always willing to step in and help wherever the team needs support, demonstrating a strong sense of commitment to the project.
+4. An area for development would be to take a more hands-on role in the technical implementation alongside his leadership responsibilities. Bridging the gap between quality assurance and active development could further strengthen the team’s delivery and help him grow as a well-rounded technical contributor.
+5. 10
+
+
+
+2.2 Feedback Received
+Obtain feedback from your group members about your work and paste them below. You should not modify your peer’s review.
+
+
+
+
+
+
+3. Reflection
+You need to read the feedback written for you by your peers and reflect on this. When reflecting, you are encouraged to think about:
+1.	What have you learnt from working on this project so far?
+2.	Whether you think the reviewers’ comments are fair or not, and provide reason.
+3.	Whether you think the reviewers’ comments are useful or not, and provide reason.
+4.	How would you take the reviewers’ comments to improve your work/process?
+5.	Comment on teamwork: How can your team collaborate better? How can you work better with your team members? How can you influence your team members to work better as a team?
+
+	Answer:
+
+1.	Through this project, I have learned a great deal about working effectively in a team environment, including how to communicate clearly, divide responsibilities, and stay aligned toward a shared goal. I also developed stronger time management skills, learning how to balance my individual contributions with the demands of the overall project timeline.
+2.	I believe the peer review process is fair, as it provides an outside perspective that we may not always be able to see in ourselves. Reviewers can observe how we contribute to the team, communicate, and carry out our responsibilities from a different vantage point, which makes the feedback more well-rounded and objective.
+3.	The reviewers’ comments are useful, as they highlight areas of strength and areas for growth that can directly inform how we approach our work going forward. Receiving structured feedback from peers helps build self-awareness and encourages continuous improvement throughout the project.
+4.	I would take the reviewers’ comments on board by actively reflecting on the areas they have identified and setting small, achievable goals to address them. Rather than viewing the feedback as criticism, I would treat it as an opportunity to refine my approach and become a more effective contributor to the team.
+5.	As a team, we could collaborate more effectively by establishing clearer communication norms, such as regular check-ins and shared progress updates. On my part, I can contribute by being more proactive in reaching out to team members, offering support early, and fostering a culture where everyone feels comfortable sharing ideas and raising concerns openly.
