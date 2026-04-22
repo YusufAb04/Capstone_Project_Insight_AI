@@ -4,38 +4,49 @@ cd /d "%~dp0"
 
 echo ============================================
 echo   INSIGHT.AI - Setup
+echo   (This may take several minutes)
 echo ============================================
 echo.
-
-REM ── IMPORTANT ────────────────────────────────────────────────────────────
 echo WARNING: Do NOT place this project inside OneDrive, Google Drive,
 echo or any cloud-synced folder. The database and ChromaDB files must
-echo remain local to this machine to stay fully offline and to prevent
-echo file locking issues during sync.
+echo remain local to prevent corruption and file locking issues.
 echo.
 pause
 
 REM ── Python check ─────────────────────────────────────────────────────────
-where py >nul 2>nul
-if %errorlevel%==0 (
-    set "PY_CMD=py"
-) else (
-    where python >nul 2>nul
-    if %errorlevel%==0 (
-        set "PY_CMD=python"
-    ) else (
-        echo [ERROR] Python was not found on this machine.
-        echo Please install Python 3.10+ first, then run this file again.
-        pause
-        exit /b 1
-    )
-)
+echo [1/7] Checking Python...
+echo        Looking for Python 3.12, 3.11, or 3.10 (required for package compatibility)...
 
-echo [1/8] Using Python command: %PY_CMD%
+set "PY_CMD="
+
+py -3.12 --version >nul 2>nul
+if %errorlevel%==0 ( set "PY_CMD=py -3.12" & goto :py_found )
+
+py -3.11 --version >nul 2>nul
+if %errorlevel%==0 ( set "PY_CMD=py -3.11" & goto :py_found )
+
+py -3.10 --version >nul 2>nul
+if %errorlevel%==0 ( set "PY_CMD=py -3.10" & goto :py_found )
+
+echo.
+echo [ERROR] Python 3.10, 3.11, or 3.12 was not found.
+echo.
+echo This app requires Python 3.10, 3.11, or 3.12.
+echo Python 3.13+ is NOT supported yet (packages lack pre-built wheels).
+echo.
+echo Please download Python 3.12 from:
+echo   https://www.python.org/downloads/release/python-31211/
+echo Make sure to tick "Add Python to PATH" during install.
+echo Then run this file again.
+pause
+exit /b 1
+
+:py_found
+echo        Python found: %PY_CMD%
 
 REM ── Virtual environment ───────────────────────────────────────────────────
 if not exist ".venv\Scripts\python.exe" (
-    echo [2/8] Creating virtual environment...
+    echo [2/7] Creating virtual environment...
     %PY_CMD% -m venv .venv
     if errorlevel 1 (
         echo [ERROR] Failed to create virtual environment.
@@ -43,82 +54,101 @@ if not exist ".venv\Scripts\python.exe" (
         exit /b 1
     )
 ) else (
-    echo [2/8] Virtual environment already exists.
+    echo [2/7] Virtual environment already exists, skipping.
 )
 
 REM ── pip upgrade ───────────────────────────────────────────────────────────
-echo [3/8] Upgrading pip...
-call ".venv\Scripts\python.exe" -m pip install --upgrade pip
+echo [3/7] Upgrading pip...
+call ".venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
 if errorlevel 1 (
-    echo [ERROR] Failed to upgrade pip.
-    pause
-    exit /b 1
+    echo [WARNING] pip upgrade failed, continuing anyway.
 )
 
-REM ── Core packages ─────────────────────────────────────────────────────────
-echo [4/8] Installing core packages...
+REM ── All packages ──────────────────────────────────────────────────────────
+echo [4/7] Installing all required packages...
+echo        This may take several minutes on first run.
 call ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 (
-    echo [ERROR] Failed to install core packages.
+    echo.
+    echo [ERROR] Package installation failed. See output above for details.
     pause
     exit /b 1
 )
 
-REM ── Optional OCR ──────────────────────────────────────────────────────────
-echo.
-set /p INSTALL_OCR=Do you want to install optional OCR packages? (Y/N):
-if /I "%INSTALL_OCR%"=="Y" (
-    echo [5/8] Installing OCR packages...
-    call ".venv\Scripts\python.exe" -m pip install pytesseract pdf2image pillow
-    if errorlevel 1 (
-        echo [WARNING] OCR packages did not install cleanly.
-    )
-    echo NOTE: Full OCR also needs native Tesseract OCR and Poppler installed separately.
-) else (
-    echo [5/8] Skipping OCR packages.
+REM ── Embedding model ───────────────────────────────────────────────────────
+echo [5/7] Downloading AI embedding model (one-time, requires internet)...
+call ".venv\Scripts\python.exe" -c "from sentence_transformers import SentenceTransformer; print('  Downloading all-MiniLM-L6-v2...'); SentenceTransformer('all-MiniLM-L6-v2'); print('  Embedding model ready.')"
+if errorlevel 1 (
+    echo [WARNING] Embedding model download failed. Check your internet and re-run setup.
 )
 
-REM ── RAG stack ─────────────────────────────────────────────────────────────
-echo.
-set /p INSTALL_RAG=Do you want to install the AI / RAG stack (Ollama + ChromaDB)? (Y/N):
-if /I "%INSTALL_RAG%"=="Y" (
-    echo [6/8] Installing RAG packages (this may take a few minutes)...
-    call ".venv\Scripts\python.exe" -m pip install chromadb==0.5.23 langchain==0.3.25 langchain-community==0.3.25 langchain-ollama==0.2.5 langchain-text-splitters==0.3.8 sentence-transformers pysqlite3-binary
+REM ── Ollama check and auto-install ─────────────────────────────────────────
+echo [6/7] Checking Ollama...
+
+set "OLLAMA_EXE="
+where ollama >nul 2>nul
+if %errorlevel%==0 (
+    set "OLLAMA_EXE=ollama"
+    echo        Ollama already installed.
+) else if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
+    set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+    echo        Ollama already installed.
+)
+
+if "!OLLAMA_EXE!"=="" (
+    echo        Ollama not found. Downloading and installing automatically...
+    echo        Requires internet connection (~90MB download).
+    echo.
+
+    set "OLLAMA_INSTALLER=%TEMP%\OllamaSetup.exe"
+    powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile '!OLLAMA_INSTALLER!' -UseBasicParsing"
     if errorlevel 1 (
-        echo [WARNING] Some RAG packages did not install cleanly. Check output above.
+        echo.
+        echo [ERROR] Could not download Ollama installer.
+        echo Please check your internet connection, or install manually from https://ollama.com
+        echo Then re-run this setup.
+        pause
+        exit /b 1
     )
 
-    echo [7/8] Pre-downloading embedding model (requires internet — only needed once)...
-    call ".venv\Scripts\python.exe" -c "from sentence_transformers import SentenceTransformer; print('Downloading all-MiniLM-L6-v2...'); SentenceTransformer('all-MiniLM-L6-v2'); print('Embedding model ready.')"
+    echo        Running Ollama installer...
+    start /wait "" "!OLLAMA_INSTALLER!" /S
     if errorlevel 1 (
-        echo [WARNING] Embedding model download failed. Ensure internet access and retry.
+        echo [WARNING] Ollama installer returned an error. It may still have installed correctly.
     )
 
-    echo.
-    echo ════════════════════════════════════════════════
-    echo   OLLAMA SETUP (required for AI answers)
-    echo ════════════════════════════════════════════════
-    echo.
-    echo  Ollama is NOT a Python package. You must install it separately:
-    echo.
-    echo  1. Go to: https://ollama.com  and download the Windows installer
-    echo  2. Run the installer (it sets up a background service automatically)
-    echo  3. Open a NEW terminal window and run:
-    echo        ollama pull llama3.2:3b
-    echo     This downloads the AI model (~2GB — only needed once)
-    echo  4. Ollama runs on http://localhost:11434 — keep it running while using the app
-    echo.
-    echo  Once Ollama is running, the sidebar in INSIGHT.AI will show a green dot.
-    echo ════════════════════════════════════════════════
-    echo.
-    pause
+    echo        Waiting for Ollama service to start...
+    timeout /t 8 /nobreak >nul
+
+    set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+
+    if not exist "!OLLAMA_EXE!" (
+        echo [WARNING] Ollama executable not found at expected location after install.
+        echo You may need to restart your PC and re-run setup, or install manually from https://ollama.com
+        set "OLLAMA_EXE="
+    ) else (
+        echo        Ollama installed successfully.
+    )
+)
+
+REM ── Pull AI model ─────────────────────────────────────────────────────────
+if not "!OLLAMA_EXE!"=="" (
+    echo        Pulling AI model llama3.2:3b (~2GB, one-time download)...
+    echo        This will take a few minutes depending on your internet speed.
+    "!OLLAMA_EXE!" pull llama3.2:3b
+    if errorlevel 1 (
+        echo [WARNING] Could not pull the AI model right now.
+        echo You can run this manually later:  ollama pull llama3.2:3b
+    ) else (
+        echo        AI model ready.
+    )
 ) else (
-    echo [6/8] Skipping RAG stack. The app will use keyword search instead of AI answers.
-    echo [7/8] Skipping embedding model download.
+    echo [WARNING] Skipping model download - Ollama not found.
+    echo Install Ollama from https://ollama.com then run:  ollama pull llama3.2:3b
 )
 
 REM ── Create data directories ────────────────────────────────────────────────
-echo [8/8] Creating data directories...
+echo [7/7] Creating data directories...
 if not exist "data" mkdir data
 if not exist "data\chromadb" mkdir data\chromadb
 if not exist "logs" mkdir logs
@@ -130,8 +160,7 @@ echo ============================================
 echo   Setup complete!
 echo ============================================
 echo.
-echo To start the app, run:  run.bat
-echo Or from terminal:       .venv\Scripts\python.exe -m streamlit run app.py
+echo To start the app, double-click:  run.bat
 echo.
 pause
 endlocal

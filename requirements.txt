@@ -1,0 +1,11 @@
+streamlit
+pandas
+PyPDF2
+python-docx
+scikit-learn
+chromadb==0.5.23
+langchain==0.3.25
+langchain-community==0.3.25
+langchain-ollama==0.2.3
+langchain-text-splitters==0.3.8
+sentence-transformers
