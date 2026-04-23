@@ -1069,28 +1069,6 @@ def render_operations() -> None:
             st.success("RAG settings saved.")
 
         st.divider()
-        st.markdown("### Sync & Maintenance")
-        st.write("Use **Sync missing** to embed documents that were ingested before the RAG stack was set up, or while Ollama was offline.")
-        if st.button("Sync missing documents to ChromaDB", use_container_width=True):
-            prog = st.progress(0, text="Syncing…")
-            def sync_cb(done, total, msg):
-                prog.progress(int((done / max(total, 1)) * 100), text=msg)
-            n = sync_missing_to_chroma(st.session_state.db_path, progress_callback=sync_cb)
-            prog.progress(100, text="Done.")
-            st.success(f"Synced {n} document(s) to ChromaDB.")
-            log_audit("sync_chroma", "Operations", f"Synced {n} documents to ChromaDB")
-
-        st.write("**Reset collection** deletes all embeddings — documents will need to be re-synced.")
-        if st.button("Reset ChromaDB collection", type="secondary"):
-            reset_collection(persist_dir=_chroma_dir())
-            conn = get_connection(st.session_state.db_path)
-            conn.cursor().execute("UPDATE files SET chroma_synced = 0, chunk_count = 0")
-            conn.commit()
-            conn.close()
-            st.warning("ChromaDB collection reset. Run Sync to rebuild embeddings.")
-            log_audit("reset_chroma", "Operations", "ChromaDB collection reset")
-
-        st.divider()
         st.markdown("### Ollama setup instructions")
         st.info(
             "Ollama is not a Python package — it has its own Windows installer.\n\n"
