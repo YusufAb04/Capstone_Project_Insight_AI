@@ -225,16 +225,18 @@ def purge_orphaned_chunks(db_path: str, persist_dir: str = "data/chromadb") -> i
         if not chroma_paths:
             return 0
 
-        conn = __import__("sqlite3").connect(db_path)
-        placeholders = ",".join("?" * len(chroma_paths))
-        sqlite_paths = {
-            row[0]
-            for row in conn.execute(
-                f"SELECT file_path FROM files WHERE file_path IN ({placeholders})",
-                list(chroma_paths),
-            ).fetchall()
-        }
-        conn.close()
+        conn = sqlite3.connect(db_path)
+        try:
+            placeholders = ",".join("?" * len(chroma_paths))
+            sqlite_paths = {
+                row[0]
+                for row in conn.execute(
+                    f"SELECT file_path FROM files WHERE file_path IN ({placeholders})",
+                    list(chroma_paths),
+                ).fetchall()
+            }
+        finally:
+            conn.close()
 
         total = 0
         for fp in chroma_paths - sqlite_paths:
