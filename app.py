@@ -23,7 +23,6 @@ from src.batch_processor import (
     list_schedules,
     update_schedule_status,
     run_due_schedules,
-    sync_missing_to_chroma,
     _CHROMA_AVAILABLE,
 )
 from src.exporter import build_export_text_from_records, build_export_json_from_records
@@ -40,7 +39,7 @@ except Exception:
 # RAG imports (optional — graceful fallback if not installed)
 try:
     from src.rag.llm_interface import check_ollama_status, get_llm, ask_with_rag
-    from src.rag.vector_store import collection_stats, reset_collection
+    from src.rag.vector_store import collection_stats, purge_orphaned_chunks, delete_by_file_path
     from src.rag.health import rag_health_report
     _RAG_IMPORTS_OK = True
 except ImportError:
@@ -180,6 +179,8 @@ def init_state() -> None:
     st.session_state.setdefault("chat_history", [])   # list of {role, content, sources}
     st.session_state.setdefault("ollama_ok", None)     # None=unchecked, True/False
     st.session_state.setdefault("rag_llm", None)       # cached ChatOllama instance
+    st.session_state.setdefault("pending_delete", None)
+    st.session_state.setdefault("_chroma_purged", False)
 
 
 # ---------------------------------------------------------------------------
@@ -1138,6 +1139,9 @@ def main() -> None:
     init_state()
     render_sidebar()
     init_database(st.session_state.db_path)
+    if _RAG_IMPORTS_OK and _CHROMA_AVAILABLE and not st.session_state._chroma_purged:
+        st.session_state._chroma_purged = True
+        purge_orphaned_chunks(st.session_state.db_path, persist_dir=_chroma_dir())
 
     page = st.session_state.page
     if page == "Home":
