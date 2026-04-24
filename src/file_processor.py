@@ -283,7 +283,10 @@ def process_file_bytes(
         from src.llm_enricher import enrich_with_llm
         enriched = enrich_with_llm(analysis_text, mode_result["risk_label"], llm)
         if enriched:
-            mode_result.update(enriched)
+            mode_result["summary"] = enriched["summary"]
+            mode_result["document_type"] = enriched["document_type"]
+            mode_result["risk_explanation"] = enriched["risk_explanation"]
+            mode_result["management_takeaway"] = enriched["management_takeaway"]
             _llm_enriched = 1
 
     return {
@@ -327,5 +330,5 @@ def process_uploaded_file(uploaded_file, mode: str = "Premium", ocr_config: Opti
     )
 
 
-def process_multiple_files(uploaded_files, mode: str = "Premium", ocr_config: Optional[dict] = None) -> List[Dict[str, Any]]:
-    return [process_uploaded_file(f, mode=mode, ocr_config=ocr_config) for f in uploaded_files]
+def process_multiple_files(uploaded_files, mode: str = "Premium", ocr_config: Optional[dict] = None, llm=None) -> List[Dict[str, Any]]:
+    return [process_uploaded_file(f, mode=mode, ocr_config=ocr_config, llm=llm) for f in uploaded_files]

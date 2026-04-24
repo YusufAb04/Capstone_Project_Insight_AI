@@ -98,6 +98,9 @@ def test_process_file_bytes_enriches_when_llm_provided():
     assert result["llm_enriched"] == 1
     assert result["document_type"] == "Contract"
     assert result["summary"] == "This is a test document."
+    assert isinstance(result["risk_score"], (int, float))
+    assert result["risk_label"] in {"Low", "Medium", "High", "Critical"}
+    assert isinstance(result["keywords"], list)
 
 
 def test_process_file_bytes_skips_enrichment_when_llm_none():
