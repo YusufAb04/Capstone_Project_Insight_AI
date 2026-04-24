@@ -23,6 +23,7 @@ from src.batch_processor import (
     list_schedules,
     update_schedule_status,
     run_due_schedules,
+    enrich_existing_with_llm,
     _CHROMA_AVAILABLE,
 )
 from src.exporter import build_export_text_from_records, build_export_json_from_records
@@ -326,7 +327,7 @@ def load_records(limit: int = 10000):
     select_sql = f"""
         SELECT
             f.file_path, f.file_name, f.extension, f.file_size, f.modified_time, f.file_hash,
-            f.status, f.ocr_used, f.last_processed_at,
+            f.status, f.ocr_used, f.last_processed_at, f.llm_enriched,
             a.document_type, a.summary, a.keywords_json, a.risk_score, a.risk_label,
             a.risk_categories_json, a.flagged_phrases_json, a.management_takeaway,
             a.word_count, a.char_count, a.mode, {', '.join(optional_cols)}
@@ -734,7 +735,9 @@ def render_file_explorer() -> None:
             fp = row.get("file_path", "")
             fname = row.get("file_name", "")
             c1, c2, c3, c4, c5 = st.columns(COL_W)
-            c1.write(fname[:48] + "…" if len(fname) > 48 else fname)
+            badge = "✨ " if row.get("llm_enriched") == 1 else ""
+            display_name = badge + (fname[:46] + "…" if len(fname) > 46 else fname)
+            c1.write(display_name)
             c2.write(row.get("document_type") or "—")
             c3.write(row.get("risk_label") or "—")
             c4.write(str(row.get("risk_score") or "—"))
@@ -1089,6 +1092,40 @@ def render_operations() -> None:
             st.session_state.rag_llm = None   # force LLM re-init
             st.session_state.ollama_ok = None
             st.success("RAG settings saved.")
+
+        st.divider()
+        st.markdown("### Batch AI Enrichment")
+        st.write("Generate LLM summaries and risk analysis for all previously processed files.")
+
+        try:
+            _conn_tmp = get_connection(st.session_state.db_path)
+            _unenriched = _conn_tmp.execute(
+                "SELECT COUNT(*) FROM files WHERE llm_enriched = 0 AND status = 'processed'"
+            ).fetchone()[0]
+            _conn_tmp.close()
+        except Exception:
+            _unenriched = 0
+
+        st.caption(f"{_unenriched} file(s) not yet enriched with AI.")
+
+        _enrich_disabled = not health.get("ollama_reachable") or not _RAG_IMPORTS_OK
+        if st.button("Enrich existing files with AI", disabled=_enrich_disabled):
+            _llm = get_llm(model_name=_ollama_model())
+            _progress_bar = st.progress(0.0)
+            _status_text = st.empty()
+
+            def _enrich_cb(done: int, total: int, fname: str) -> None:
+                _progress_bar.progress(done / total if total else 1.0)
+                _status_text.text(f"[{done}/{total}] {fname}")
+
+            _count = enrich_existing_with_llm(
+                st.session_state.db_path, _llm, progress_callback=_enrich_cb
+            )
+            _progress_bar.progress(1.0)
+            _status_text.empty()
+            st.success(f"Enriched {_count} file(s) with AI analysis.")
+        elif _enrich_disabled and not health.get("ollama_reachable"):
+            st.caption("Start Ollama to enable enrichment.")
 
         st.divider()
         st.markdown("### Ollama setup instructions")
