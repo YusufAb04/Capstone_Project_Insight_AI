@@ -1,0 +1,76 @@
+# tests/test_llm_enricher.py
+from unittest.mock import MagicMock
+
+import pytest
+
+from src.llm_enricher import _parse_response, enrich_with_llm
+
+_VALID_RAW = (
+    "SUMMARY: This is a test document.\n"
+    "TYPE: Contract\n"
+    "RISK: There is moderate liability risk.\n"
+    "TAKEAWAY: Legal review recommended."
+)
+
+
+def test_parse_response_returns_all_four_fields():
+    result = _parse_response(_VALID_RAW)
+    assert result is not None
+    assert result["summary"] == "This is a test document."
+    assert result["document_type"] == "Contract"
+    assert result["risk_explanation"] == "There is moderate liability risk."
+    assert result["management_takeaway"] == "Legal review recommended."
+
+
+def test_parse_response_missing_field_returns_none():
+    raw = "SUMMARY: Summary only.\nTYPE: Contract\nRISK: Some risk."
+    assert _parse_response(raw) is None
+
+
+def test_parse_response_empty_returns_none():
+    assert _parse_response("") is None
+
+
+def test_parse_response_extra_lines_ignored():
+    raw = "Preamble text\n" + _VALID_RAW + "\nTrailing text"
+    result = _parse_response(raw)
+    assert result is not None
+    assert result["document_type"] == "Contract"
+
+
+def _make_llm(raw_content: str):
+    mock_response = MagicMock()
+    mock_response.content = raw_content
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = mock_response
+    return mock_llm
+
+
+def test_enrich_with_llm_success():
+    llm = _make_llm(_VALID_RAW)
+    result = enrich_with_llm("some document content", "Medium", llm)
+    assert result is not None
+    assert result["document_type"] == "Contract"
+    assert result["summary"] == "This is a test document."
+
+
+def test_enrich_with_llm_malformed_response_returns_none():
+    llm = _make_llm("SUMMARY: Only one field.")
+    result = enrich_with_llm("content", "Low", llm)
+    assert result is None
+
+
+def test_enrich_with_llm_exception_returns_none():
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = RuntimeError("Ollama timeout")
+    result = enrich_with_llm("content", "High", mock_llm)
+    assert result is None
+
+
+def test_enrich_with_llm_truncates_long_content():
+    long_content = " ".join(["word"] * 2000)
+    llm = _make_llm(_VALID_RAW)
+    enrich_with_llm(long_content, "Low", llm)
+    called_prompt = str(llm.invoke.call_args[0][0])
+    # Truncated at 1500 words — count of "word" in the prompt must be <= 1500
+    assert called_prompt.count("word") <= 1500
