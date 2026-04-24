@@ -242,6 +242,7 @@ def process_file_bytes(
     mode: str = "Premium",
     ocr_config: Optional[dict] = None,
     file_path: Optional[str] = None,
+    llm=None,
 ) -> Dict[str, Any]:
     extension = get_file_extension(filename)
     if extension not in SUPPORTED_EXTENSIONS:
@@ -277,6 +278,14 @@ def process_file_bytes(
 
     mode_result = apply_mode_processing(analysis_text, mode)
 
+    _llm_enriched = 0
+    if llm is not None:
+        from src.llm_enricher import enrich_with_llm
+        enriched = enrich_with_llm(analysis_text, mode_result["risk_label"], llm)
+        if enriched:
+            mode_result.update(enriched)
+            _llm_enriched = 1
+
     return {
         "filename": filename,
         "file_path": file_path or f"uploaded://{filename}",
@@ -297,22 +306,24 @@ def process_file_bytes(
         "management_takeaway": mode_result["management_takeaway"],
         "risk_explanation": mode_result["risk_explanation"],
         "ocr_used": ocr_used,
+        "llm_enriched": _llm_enriched,
     }
 
 
-def process_file_path(file_path: str, mode: str = "Premium", ocr_config: Optional[dict] = None) -> Dict[str, Any]:
+def process_file_path(file_path: str, mode: str = "Premium", ocr_config: Optional[dict] = None, llm=None) -> Dict[str, Any]:
     path = Path(file_path)
     data = path.read_bytes()
-    return process_file_bytes(path.name, data, mode=mode, ocr_config=ocr_config, file_path=file_path)
+    return process_file_bytes(path.name, data, mode=mode, ocr_config=ocr_config, file_path=file_path, llm=llm)
 
 
-def process_uploaded_file(uploaded_file, mode: str = "Premium", ocr_config: Optional[dict] = None) -> Dict[str, Any]:
+def process_uploaded_file(uploaded_file, mode: str = "Premium", ocr_config: Optional[dict] = None, llm=None) -> Dict[str, Any]:
     return process_file_bytes(
         uploaded_file.name,
         uploaded_file.getvalue(),
         mode=mode,
         ocr_config=ocr_config,
         file_path=f"uploaded://{uploaded_file.name}",
+        llm=llm,
     )
 
 

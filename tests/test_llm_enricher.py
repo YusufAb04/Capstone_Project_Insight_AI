@@ -88,3 +88,20 @@ def test_init_database_adds_llm_enriched_column():
         with closing(sqlite3.connect(db_path)) as conn:
             cols = [row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()]
         assert "llm_enriched" in cols
+
+
+def test_process_file_bytes_enriches_when_llm_provided():
+    from src.file_processor import process_file_bytes
+    llm = _make_llm(_VALID_RAW)
+    content = b"This is a sample contract document with some text content for testing."
+    result = process_file_bytes("test.txt", content, llm=llm)
+    assert result["llm_enriched"] == 1
+    assert result["document_type"] == "Contract"
+    assert result["summary"] == "This is a test document."
+
+
+def test_process_file_bytes_skips_enrichment_when_llm_none():
+    from src.file_processor import process_file_bytes
+    content = b"This is a sample document."
+    result = process_file_bytes("test.txt", content, llm=None)
+    assert result["llm_enriched"] == 0
