@@ -1,4 +1,10 @@
 # tests/test_llm_enricher.py
+from __future__ import annotations
+
+import os
+import sqlite3
+import tempfile
+from contextlib import closing
 from unittest.mock import MagicMock
 
 from src.llm_enricher import _parse_response, enrich_with_llm
@@ -74,14 +80,11 @@ def test_enrich_with_llm_truncates_long_content():
     assert called_prompt.count("word") == 1500
 
 
-import sqlite3, tempfile, os
-
 def test_init_database_adds_llm_enriched_column():
     from src.database import init_database
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "test.db")
         init_database(db_path)
-        conn = sqlite3.connect(db_path)
-        cols = [row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()]
-        conn.close()
+        with closing(sqlite3.connect(db_path)) as conn:
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()]
         assert "llm_enriched" in cols
