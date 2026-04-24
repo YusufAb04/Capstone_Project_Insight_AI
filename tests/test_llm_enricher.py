@@ -1,8 +1,6 @@
 # tests/test_llm_enricher.py
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.llm_enricher import _parse_response, enrich_with_llm
 
 _VALID_RAW = (
@@ -72,5 +70,5 @@ def test_enrich_with_llm_truncates_long_content():
     llm = _make_llm(_VALID_RAW)
     enrich_with_llm(long_content, "Low", llm)
     called_prompt = str(llm.invoke.call_args[0][0])
-    # Truncated at 1500 words — count of "word" in the prompt must be <= 1500
-    assert called_prompt.count("word") <= 1500
+    # Truncated at exactly 1500 words — count of "word" in the prompt must be == 1500
+    assert called_prompt.count("word") == 1500

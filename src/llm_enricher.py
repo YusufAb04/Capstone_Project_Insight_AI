@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+__all__ = ["enrich_with_llm"]
+
 _MAX_WORDS = 1500
 
 _PROMPT_TEMPLATE = (
@@ -41,7 +43,7 @@ def _parse_response(raw: str) -> dict | None:
     for line in raw.splitlines():
         line = line.strip()
         for prefix, key in _PREFIX_TO_KEY.items():
-            if line.startswith(prefix):
+            if line.startswith(prefix) and key not in result:
                 result[key] = line[len(prefix):].strip()
                 break
     if result.keys() == _REQUIRED_KEYS:
