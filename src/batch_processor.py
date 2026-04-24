@@ -424,6 +424,9 @@ def enrich_existing_with_llm(db_path: str, llm, progress_callback: ProgressCallb
     analysis_results and sets files.llm_enriched = 1 on success.
     Returns count of successfully enriched files.
     """
+    if not _ENRICHMENT_AVAILABLE:
+        return 0
+
     conn = get_connection(db_path)
     cur = conn.cursor()
     cur.execute(
@@ -445,28 +448,33 @@ def enrich_existing_with_llm(db_path: str, llm, progress_callback: ProgressCallb
         file_name = row[1]
         content_text = row[2]
         risk_label = row[3]
-        if content_text and risk_label:
-            enriched = enrich_with_llm(content_text, risk_label, llm)
-            if enriched:
-                conn2 = get_connection(db_path)
-                conn2.execute(
-                    """
-                    UPDATE analysis_results
-                    SET summary = ?, document_type = ?, risk_explanation = ?, management_takeaway = ?
-                    WHERE file_id = ?
-                    """,
-                    (
-                        enriched["summary"],
-                        enriched["document_type"],
-                        enriched["risk_explanation"],
-                        enriched["management_takeaway"],
-                        file_id,
-                    ),
-                )
-                conn2.execute("UPDATE files SET llm_enriched = 1 WHERE id = ?", (file_id,))
-                conn2.commit()
-                conn2.close()
-                enriched_count += 1
+        try:
+            if content_text and risk_label:
+                enriched = enrich_with_llm(content_text, risk_label, llm)
+                if enriched:
+                    conn2 = get_connection(db_path)
+                    try:
+                        conn2.execute(
+                            """
+                            UPDATE analysis_results
+                            SET summary = ?, document_type = ?, risk_explanation = ?, management_takeaway = ?
+                            WHERE file_id = ?
+                            """,
+                            (
+                                enriched["summary"],
+                                enriched["document_type"],
+                                enriched["risk_explanation"],
+                                enriched["management_takeaway"],
+                                file_id,
+                            ),
+                        )
+                        conn2.execute("UPDATE files SET llm_enriched = 1 WHERE id = ?", (file_id,))
+                        conn2.commit()
+                        enriched_count += 1
+                    finally:
+                        conn2.close()
+        except Exception:
+            pass
         if progress_callback:
             progress_callback(idx, total, file_name)
 
