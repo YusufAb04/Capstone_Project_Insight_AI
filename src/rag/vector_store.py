@@ -144,7 +144,7 @@ def delete_by_file_path(file_path: str, persist_dir: str = "data/chromadb") -> i
     return len(all_ids)
 
 
-def similarity_search(query: str, top_k: int = 4, persist_dir: str = "data/chromadb") -> list[dict]:
+def similarity_search(query: str, top_k: int = 8, persist_dir: str = "data/chromadb") -> list[dict]:
     """Return the top-k most relevant chunks for *query*.
 
     Each result dict has keys: id, text, metadata, distance.

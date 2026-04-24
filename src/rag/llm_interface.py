@@ -54,7 +54,7 @@ def ask_with_rag(
     question: str,
     llm: ChatOllama,
     persist_dir: str = "data/chromadb",
-    top_k: int = 4,
+    top_k: int = 8,
     chat_history: list[dict] | None = None,
 ) -> dict:
     """Run a RAG query and return the answer with source references.
