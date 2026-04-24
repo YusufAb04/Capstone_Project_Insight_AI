@@ -21,6 +21,7 @@ _HEADING_RE = re.compile(
 
 
 def _file_id_prefix(file_path: str) -> str:
+    """Short deterministic prefix derived from the file path."""
     return hashlib.sha256(file_path.encode()).hexdigest()[:16]
 
 
@@ -47,7 +48,7 @@ def _detect_sections(text: str) -> list[tuple[str, str]]:
     if current_lines or current_heading:
         sections.append((current_heading, "".join(current_lines)))
 
-    return sections if sections else [("", text)]
+    return sections
 
 
 def chunk_text(text: str, file_path: str, file_name: str) -> list[dict]:
@@ -67,6 +68,19 @@ def chunk_text(text: str, file_path: str, file_name: str) -> list[dict]:
 
     for heading, body in sections:
         if not body.strip():
+            if heading:
+                chunks.append({
+                    "id": f"{prefix}::chunk_{chunk_idx}",
+                    "text": f"[Section: {heading}]",
+                    "metadata": {
+                        "file_path": file_path,
+                        "file_name": file_name,
+                        "chunk_index": chunk_idx,
+                        "total_chunks": 0,
+                        "section_heading": heading,
+                    },
+                })
+                chunk_idx += 1
             continue
         for raw in _SPLITTER.split_text(body):
             chunk_text_val = f"[Section: {heading}]\n{raw}" if heading else raw

@@ -102,6 +102,19 @@ def test_chunk_text_empty_returns_empty():
     assert chunk_text("   ", "empty.txt", "empty.txt") == []
 
 
+def test_chunk_text_back_to_back_headings_both_discoverable():
+    text = (
+        "1. Introduction\n"
+        "2. Background\n"
+        "This is the background section body.\n"
+    )
+    chunks = chunk_text(text, "doc.pdf", "doc.pdf")
+    texts = [c["text"] for c in chunks]
+    # Both headings must appear in at least one chunk
+    assert any("Introduction" in t for t in texts)
+    assert any("Background" in t for t in texts)
+
+
 def test_detect_sections_long_line_not_a_heading():
     # 81-character title-case line — must NOT be detected as a heading
     long_line = "A" + "a" * 39 + " " + "B" + "a" * 38  # 82 chars
