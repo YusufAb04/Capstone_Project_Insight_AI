@@ -108,3 +108,75 @@ def test_process_file_bytes_skips_enrichment_when_llm_none():
     content = b"This is a sample document."
     result = process_file_bytes("test.txt", content, llm=None)
     assert result["llm_enriched"] == 0
+
+
+def test_enrich_existing_with_llm_updates_unenriched_files():
+    from src.database import init_database, get_connection
+    from src.batch_processor import enrich_existing_with_llm
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "test.db")
+        init_database(db_path)
+
+        conn = get_connection(db_path)
+        conn.execute(
+            "INSERT INTO files (file_path, file_name, extension, file_size, modified_time, "
+            "file_hash, status, ocr_used, last_processed_at, llm_enriched) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("uploaded://doc.txt", "doc.txt", "TXT", 100, 0.0, "abc", "processed", 0, "2026-01-01", 0),
+        )
+        conn.commit()
+        file_id = conn.execute(
+            "SELECT id FROM files WHERE file_path = 'uploaded://doc.txt'"
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO analysis_results (file_id, document_type, summary, keywords_json, "
+            "risk_score, risk_label, risk_categories_json, flagged_phrases_json, "
+            "management_takeaway, word_count, char_count, mode, content_text, risk_explanation) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (file_id, "Report", "Old summary.", "[]", 10, "Low", "[]", "[]",
+             "Old takeaway.", 5, 30, "Premium", "Sample document text.", "Old explanation."),
+        )
+        conn.commit()
+        conn.close()
+
+        llm = _make_llm(_VALID_RAW)
+        count = enrich_existing_with_llm(db_path, llm)
+
+        assert count == 1
+        conn2 = get_connection(db_path)
+        row = conn2.execute(
+            "SELECT summary, document_type FROM analysis_results WHERE file_id = ?", (file_id,)
+        ).fetchone()
+        enriched_flag = conn2.execute(
+            "SELECT llm_enriched FROM files WHERE id = ?", (file_id,)
+        ).fetchone()[0]
+        conn2.close()
+
+        assert row["summary"] == "This is a test document."
+        assert row["document_type"] == "Contract"
+        assert enriched_flag == 1
+
+
+def test_enrich_existing_with_llm_skips_already_enriched():
+    from src.database import init_database, get_connection
+    from src.batch_processor import enrich_existing_with_llm
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "test.db")
+        init_database(db_path)
+
+        conn = get_connection(db_path)
+        conn.execute(
+            "INSERT INTO files (file_path, file_name, extension, file_size, modified_time, "
+            "file_hash, status, ocr_used, last_processed_at, llm_enriched) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("uploaded://doc2.txt", "doc2.txt", "TXT", 100, 0.0, "def", "processed", 0, "2026-01-01", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        llm = _make_llm(_VALID_RAW)
+        count = enrich_existing_with_llm(db_path, llm)
+        assert count == 0
+        assert not llm.invoke.called

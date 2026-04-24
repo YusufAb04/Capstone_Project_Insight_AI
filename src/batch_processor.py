@@ -18,6 +18,15 @@ try:
 except ImportError:
     _CHROMA_AVAILABLE = False
 
+# LLM enrichment (requires RAG stack)
+try:
+    from src.rag.llm_interface import check_ollama_status as _check_ollama_status
+    from src.rag.llm_interface import get_llm as _llm_factory
+    from src.llm_enricher import enrich_with_llm
+    _ENRICHMENT_AVAILABLE = True
+except ImportError:
+    _ENRICHMENT_AVAILABLE = False
+
 
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -34,6 +43,20 @@ def load_ocr_config(db_path: str) -> dict:
 
 def _load_chroma_dir(db_path: str) -> str:
     return get_setting(db_path, "chroma_persist_dir", "data/chromadb") or "data/chromadb"
+
+
+def _get_ingestion_llm(db_path: str):
+    """Return a ChatOllama instance if Ollama is reachable, else None."""
+    if not _ENRICHMENT_AVAILABLE:
+        return None
+    base_url = get_setting(db_path, "ollama_base_url", "http://localhost:11434") or "http://localhost:11434"
+    model = get_setting(db_path, "ollama_model", "llama3.2:3b") or "llama3.2:3b"
+    if not _check_ollama_status(base_url):
+        return None
+    try:
+        return _llm_factory(model_name=model, base_url=base_url)
+    except Exception:
+        return None
 
 
 def create_run(conn, source_type: str, source_value: str, total_files: int) -> int:
@@ -88,6 +111,7 @@ def upsert_file_record(
     ocr_used: bool,
     chroma_synced: int = 0,
     chunk_count: int = 0,
+    llm_enriched: int = 0,
 ) -> int:
     cur = conn.cursor()
     cur.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
@@ -98,22 +122,23 @@ def upsert_file_record(
             """
             UPDATE files
             SET file_name = ?, extension = ?, file_size = ?, modified_time = ?, file_hash = ?,
-                status = ?, ocr_used = ?, last_processed_at = ?, chroma_synced = ?, chunk_count = ?
+                status = ?, ocr_used = ?, last_processed_at = ?, chroma_synced = ?, chunk_count = ?,
+                llm_enriched = ?
             WHERE id = ?
             """,
             (file_name, extension, file_size, modified_time, file_hash, status,
-             int(bool(ocr_used)), now_str(), chroma_synced, chunk_count, file_id),
+             int(bool(ocr_used)), now_str(), chroma_synced, chunk_count, llm_enriched, file_id),
         )
     else:
         cur.execute(
             """
             INSERT INTO files
             (file_path, file_name, extension, file_size, modified_time, file_hash,
-             status, ocr_used, last_processed_at, chroma_synced, chunk_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, ocr_used, last_processed_at, chroma_synced, chunk_count, llm_enriched)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (file_path, file_name, extension, file_size, modified_time, file_hash,
-             status, int(bool(ocr_used)), now_str(), chroma_synced, chunk_count),
+             status, int(bool(ocr_used)), now_str(), chroma_synced, chunk_count, llm_enriched),
         )
         file_id = cur.lastrowid
     conn.commit()
@@ -200,6 +225,7 @@ def process_folder_to_db(
     discovered = scan_folder(folder_path, recursive=recursive)
     run_id = create_run(conn, "folder", folder_path, len(discovered))
     ocr_config = load_ocr_config(db_path)
+    llm = _get_ingestion_llm(db_path)
     chroma_dir = _load_chroma_dir(db_path)
 
     processed = skipped = failed = 0
@@ -214,7 +240,7 @@ def process_folder_to_db(
                     progress_callback(idx, len(discovered), f"Skipped unchanged: {meta['file_name']}")
                 continue
 
-            result = process_file_path(file_path, mode=mode, ocr_config=ocr_config)
+            result = process_file_path(file_path, mode=mode, ocr_config=ocr_config, llm=llm)
             chunk_count = _sync_to_chroma(result, file_path, chroma_dir)
             chroma_synced = 1 if chunk_count > 0 else 0
 
@@ -230,6 +256,7 @@ def process_folder_to_db(
                 ocr_used=result.get("ocr_used", False),
                 chroma_synced=chroma_synced,
                 chunk_count=chunk_count,
+                llm_enriched=result.get("llm_enriched", 0),
             )
             replace_analysis_result(conn, file_id, result)
             processed += 1
@@ -268,6 +295,7 @@ def process_uploaded_files_to_db(
     total = len(uploaded_files)
     run_id = create_run(conn, "upload", f"{total} uploaded files", total)
     ocr_config = load_ocr_config(db_path)
+    llm = _get_ingestion_llm(db_path)
     chroma_dir = _load_chroma_dir(db_path)
 
     processed = skipped = failed = 0
@@ -275,7 +303,7 @@ def process_uploaded_files_to_db(
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
         pseudo_path = f"uploaded://{uploaded_file.name}"
         try:
-            result = process_uploaded_file(uploaded_file, mode=mode, ocr_config=ocr_config)
+            result = process_uploaded_file(uploaded_file, mode=mode, ocr_config=ocr_config, llm=llm)
             chunk_count = _sync_to_chroma(result, pseudo_path, chroma_dir)
             chroma_synced = 1 if chunk_count > 0 else 0
 
@@ -291,6 +319,7 @@ def process_uploaded_files_to_db(
                 ocr_used=result.get("ocr_used", False),
                 chroma_synced=chroma_synced,
                 chunk_count=chunk_count,
+                llm_enriched=result.get("llm_enriched", 0),
             )
             replace_analysis_result(conn, file_id, result)
             processed += 1
@@ -386,6 +415,62 @@ def sync_missing_to_chroma(db_path: str, progress_callback: ProgressCallback = N
                 progress_callback(idx, total, f"Failed to sync: {file_name}")
 
     return synced
+
+
+def enrich_existing_with_llm(db_path: str, llm, progress_callback: ProgressCallback = None) -> int:
+    """Enrich all processed files that have not yet been LLM-enriched.
+
+    Updates summary, document_type, risk_explanation, management_takeaway in
+    analysis_results and sets files.llm_enriched = 1 on success.
+    Returns count of successfully enriched files.
+    """
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT f.id, f.file_name, a.content_text, a.risk_label
+        FROM files f
+        JOIN analysis_results a ON a.file_id = f.id
+        WHERE f.llm_enriched = 0 AND f.status = 'processed'
+        """
+    )
+    pending = cur.fetchall()
+    conn.close()
+
+    total = len(pending)
+    enriched_count = 0
+
+    for idx, row in enumerate(pending, start=1):
+        file_id = row[0]
+        file_name = row[1]
+        content_text = row[2]
+        risk_label = row[3]
+        if content_text and risk_label:
+            enriched = enrich_with_llm(content_text, risk_label, llm)
+            if enriched:
+                conn2 = get_connection(db_path)
+                conn2.execute(
+                    """
+                    UPDATE analysis_results
+                    SET summary = ?, document_type = ?, risk_explanation = ?, management_takeaway = ?
+                    WHERE file_id = ?
+                    """,
+                    (
+                        enriched["summary"],
+                        enriched["document_type"],
+                        enriched["risk_explanation"],
+                        enriched["management_takeaway"],
+                        file_id,
+                    ),
+                )
+                conn2.execute("UPDATE files SET llm_enriched = 1 WHERE id = ?", (file_id,))
+                conn2.commit()
+                conn2.close()
+                enriched_count += 1
+        if progress_callback:
+            progress_callback(idx, total, file_name)
+
+    return enriched_count
 
 
 def create_schedule(db_path: str, schedule_name: str, folder_path: str, frequency: str, recursive: bool = True, notes: str = "") -> None:
