@@ -100,3 +100,14 @@ def test_chunk_text_chunk_indices_sequential():
 def test_chunk_text_empty_returns_empty():
     assert chunk_text("", "empty.txt", "empty.txt") == []
     assert chunk_text("   ", "empty.txt", "empty.txt") == []
+
+
+def test_detect_sections_long_line_not_a_heading():
+    # 81-character title-case line — must NOT be detected as a heading
+    long_line = "A" + "a" * 39 + " " + "B" + "a" * 38  # 82 chars
+    text = f"{long_line}\nThis is the body text below the long line.\n"
+    sections = _detect_sections(text)
+    headings = [h for h, _ in sections]
+    assert long_line not in headings
+    assert len(sections) == 1
+    assert sections[0][0] == ""  # treated as preamble, not a heading
