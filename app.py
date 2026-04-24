@@ -176,7 +176,7 @@ def inject_css() -> None:
 def init_state() -> None:
     st.session_state.setdefault("db_path", "insight_ai_production.db")
     st.session_state.setdefault("last_run_id", None)
-    st.session_state.setdefault("page", "Home")
+    st.session_state.setdefault("page", "Ask Questions")
     st.session_state.setdefault("chat_history", [])   # list of {role, content, sources}
     st.session_state.setdefault("ollama_ok", None)     # None=unchecked, True/False
     st.session_state.setdefault("rag_llm", None)       # cached ChatOllama instance
@@ -236,11 +236,10 @@ def render_sidebar() -> None:
         st.divider()
 
         nav_items = [
-            ("🏠", "Home"),
+            ("🏠", "Ask Questions"),
             ("📂", "Ingestion Hub"),
             ("📈", "Executive Dashboard"),
             ("🗂️", "File Explorer"),
-            ("❓", "Ask Questions"),
             ("🛠️", "Operations & Recovery"),
             ("📝", "Reports and Logs"),
         ]
@@ -483,7 +482,7 @@ def _run_question_rag(question: str) -> None:
                 question=question,
                 llm=llm,
                 persist_dir=_chroma_dir(),
-                top_k=4,
+                top_k=8,
                 chat_history=st.session_state.chat_history,
             )
         except Exception as exc:
@@ -526,65 +525,6 @@ _HOME_SUGGESTIONS = [
     "Are there repeated compliance or security issues across the dataset?",
     "What opportunities for improvement appear across these documents?",
 ]
-
-
-def render_home() -> None:
-    log_audit("open_page", "Home", "Opened page Home")
-
-    history = st.session_state.chat_history
-
-    if not history:
-        st.markdown(
-            """
-            <div style="
-                display: flex; flex-direction: column; align-items: center;
-                justify-content: center; min-height: 52vh; text-align: center;
-                padding: 2rem 1rem 1.5rem;
-            ">
-                <div style="font-size:2.6rem;font-weight:800;letter-spacing:-0.03em;color:#eef2ff;margin-bottom:0.6rem;">
-                    INSIGHT.AI
-                </div>
-                <div style="color:#6b7694;font-size:1.05rem;">
-                    What would you like to know about your documents?
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        c1, c2 = st.columns(2, gap="small")
-        for i, suggestion in enumerate(_HOME_SUGGESTIONS):
-            with (c1 if i % 2 == 0 else c2):
-                st.markdown('<div class="suggestion-btn">', unsafe_allow_html=True)
-                if st.button(suggestion, key=f"home_sug_{i}", use_container_width=True):
-                    st.session_state.chat_history.append({"role": "user", "content": suggestion, "sources": []})
-                    log_audit("ask_question", "Home", suggestion)
-                    st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        # Replay full conversation history
-        for msg in history:
-            avatar = "👤" if msg["role"] == "user" else "🧠"
-            with st.chat_message(msg["role"], avatar=avatar):
-                st.write(msg["content"])
-                if msg.get("sources"):
-                    st.caption(f"Sources: {', '.join(msg['sources'])}")
-
-        # If last message is from the user, generate the answer now
-        if history[-1]["role"] == "user":
-            with st.chat_message("assistant", avatar="🧠"):
-                _run_question(history[-1]["content"])
-            st.rerun()
-
-        st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
-        if st.button("↩  New conversation", key="home_new"):
-            st.session_state.chat_history = []
-            st.session_state.ollama_ok = None  # re-check Ollama on next question
-            st.rerun()
-
-    if prompt := st.chat_input("Ask anything about your documents…"):
-        st.session_state.chat_history.append({"role": "user", "content": prompt, "sources": []})
-        log_audit("ask_question", "Home", prompt)
-        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -836,43 +776,56 @@ def render_file_explorer() -> None:
 
 def render_questions() -> None:
     log_audit("open_page", "Ask Questions", "Opened page Ask Questions")
-    st.title("❓ Ask Questions")
     chroma_ok, ollama_ok = _check_rag()
-    if chroma_ok and ollama_ok:
-        st.write("AI-powered answers via Ollama + ChromaDB RAG. Answers are grounded in your indexed documents.")
-    else:
-        st.write(
-            "Keyword-based answers across indexed summaries, takeaways, and extracted content. "
-            "Set up Ollama for AI-powered responses."
-        )
-
-    c1, c2 = st.columns(2)
-    for i, s in enumerate(_HOME_SUGGESTIONS):
-        with (c1 if i % 2 == 0 else c2):
-            if st.button(s, key=f"q_{i}"):
-                st.session_state._q_question = s
-
-    question = st.text_area(
-        "Your question",
-        value=st.session_state.get("_q_question", ""),
-        height=110,
-        key="q_text_area",
-    )
-    if st.button("Generate Answer", use_container_width=True):
-        st.session_state._q_question = question
 
     q = st.session_state.get("_q_question", "")
+
+    if not q:
+        st.markdown(
+            """
+            <div style="
+                display: flex; flex-direction: column; align-items: center;
+                justify-content: center; min-height: 52vh; text-align: center;
+                padding: 2rem 1rem 1.5rem;
+            ">
+                <div style="font-size:2.6rem;font-weight:800;letter-spacing:-0.03em;color:#eef2ff;margin-bottom:0.6rem;">
+                    INSIGHT.AI
+                </div>
+                <div style="color:#6b7694;font-size:1.05rem;">
+                    What would you like to know about your documents?
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        c1, c2 = st.columns(2, gap="small")
+        for i, s in enumerate(_HOME_SUGGESTIONS):
+            with (c1 if i % 2 == 0 else c2):
+                st.markdown('<div class="suggestion-btn">', unsafe_allow_html=True)
+                if st.button(s, key=f"q_{i}", use_container_width=True):
+                    st.session_state._q_question = s
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    if prompt := st.chat_input("Ask anything about your documents…"):
+        st.session_state._q_question = prompt
+        st.rerun()
+
     if not q:
         return
 
     log_audit("ask_question", "Ask Questions", q)
+
+    if st.button("↩  New question", key="q_new"):
+        st.session_state._q_question = ""
+        st.rerun()
 
     if chroma_ok and ollama_ok:
         llm = _get_llm()
         if llm:
             with st.spinner("Thinking…"):
                 try:
-                    result = ask_with_rag(q, llm=llm, persist_dir=_chroma_dir(), top_k=4)
+                    result = ask_with_rag(q, llm=llm, persist_dir=_chroma_dir(), top_k=8)
                     render_card("Answer", result["answer"])
                     if result["sources"]:
                         st.markdown("### Evidence used")
@@ -1083,6 +1036,11 @@ def render_operations() -> None:
             st.caption(f"Available Ollama models: {', '.join(health['ollama_available_models'])}")
 
         st.divider()
+        st.info(
+            "**Chunking updated:** Documents indexed before this update use smaller 500-character chunks "
+            "without section heading prefixes. Re-ingest your files via the Ingestion Hub to enable "
+            "heading-aware retrieval and improved Q&A accuracy on large documents."
+        )
         st.markdown("### Configuration")
         new_model = st.text_input("Ollama model", value=_ollama_model(), placeholder="llama3.2:3b")
         new_chroma = st.text_input("ChromaDB directory", value=_chroma_dir(), placeholder="data/chromadb")
@@ -1181,16 +1139,14 @@ def main() -> None:
         purge_orphaned_chunks(st.session_state.db_path, persist_dir=_chroma_dir())
 
     page = st.session_state.page
-    if page == "Home":
-        render_home()
+    if page == "Ask Questions":
+        render_questions()
     elif page == "Ingestion Hub":
         render_ingestion()
     elif page == "Executive Dashboard":
         render_dashboard()
     elif page == "File Explorer":
         render_file_explorer()
-    elif page == "Ask Questions":
-        render_questions()
     elif page == "Operations & Recovery":
         render_operations()
     elif page == "Reports and Logs":
