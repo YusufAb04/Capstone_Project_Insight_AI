@@ -188,6 +188,9 @@ def init_database(db_path: str) -> None:
     _ensure_column(cur, "files", "chroma_synced", "chroma_synced INTEGER DEFAULT 0")
     _ensure_column(cur, "files", "chunk_count", "chunk_count INTEGER DEFAULT 0")
 
+    # LLM enrichment flag
+    _ensure_column(cur, "files", "llm_enriched", "llm_enriched INTEGER DEFAULT 0")
+
     cur.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_files_status ON files(status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_files_chroma ON files(chroma_synced, status)")

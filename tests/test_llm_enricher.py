@@ -72,3 +72,16 @@ def test_enrich_with_llm_truncates_long_content():
     called_prompt = str(llm.invoke.call_args[0][0])
     # Truncated at exactly 1500 words — count of "word" in the prompt must be == 1500
     assert called_prompt.count("word") == 1500
+
+
+import sqlite3, tempfile, os
+
+def test_init_database_adds_llm_enriched_column():
+    from src.database import init_database
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "test.db")
+        init_database(db_path)
+        conn = sqlite3.connect(db_path)
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()]
+        conn.close()
+        assert "llm_enriched" in cols
