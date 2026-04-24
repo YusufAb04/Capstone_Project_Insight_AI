@@ -25,7 +25,7 @@ except Exception:
     convert_from_bytes = None
 
 
-SUPPORTED_EXTENSIONS = {"txt", "csv", "pdf", "docx"}
+SUPPORTED_EXTENSIONS = {"txt", "csv", "pdf", "docx", "xlsx"}
 
 
 class OCRUnavailableError(RuntimeError):
@@ -69,6 +69,26 @@ def extract_text_from_csv_bytes(data: bytes) -> str:
         row_text = " | ".join(f"{col}: {row[col]}" for col in df.columns)
         lines.append(row_text)
     return "\n".join(lines).strip()
+
+
+def extract_text_from_xlsx_bytes(data: bytes) -> str:
+    try:
+        sheets = pd.read_excel(BytesIO(data), sheet_name=None, dtype=str)
+    except Exception as exc:
+        return f"Excel file could not be read: {exc}"
+    if not sheets:
+        return "Excel file is empty."
+    parts = []
+    for sheet_name, df in sheets.items():
+        df = df.fillna("")
+        if df.empty:
+            continue
+        lines = [f"Sheet: {sheet_name}"]
+        for _, row in df.iterrows():
+            row_text = " | ".join(f"{col}: {row[col]}" for col in df.columns)
+            lines.append(row_text)
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts).strip() or "Excel file is empty."
 
 
 def ocr_status() -> dict:
@@ -243,6 +263,8 @@ def process_file_bytes(
         )
     elif extension == "docx":
         raw_content = extract_text_from_docx_bytes(data)
+    elif extension == "xlsx":
+        raw_content = extract_text_from_xlsx_bytes(data)
     else:
         raise ValueError(f"Unsupported file type: .{extension}")
 

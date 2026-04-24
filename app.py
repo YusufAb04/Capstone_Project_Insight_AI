@@ -597,8 +597,8 @@ def render_ingestion() -> None:
     with left:
         st.markdown("### Upload files")
         uploads = st.file_uploader(
-            "Supported formats: TXT, CSV, PDF, DOCX",
-            type=["txt", "csv", "pdf", "docx"],
+            "Supported formats: TXT, CSV, PDF, DOCX, XLSX",
+            type=["txt", "csv", "pdf", "docx", "xlsx"],
             accept_multiple_files=True,
         )
         if st.button("Process Uploaded Files", use_container_width=True):
