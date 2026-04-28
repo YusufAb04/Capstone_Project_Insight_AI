@@ -163,6 +163,27 @@ def inject_css() -> None:
         .stButton button, .stDownloadButton button { border-radius: 10px !important; font-weight: 500 !important; }
         #MainMenu { visibility: hidden; }
         footer    { visibility: hidden; }
+        .src-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.09);
+            border-radius: 6px;
+            padding: 4px 9px;
+            font-size: 11px !important;
+            color: #888891 !important;
+            margin-right: 6px;
+            margin-bottom: 5px;
+        }
+        .src-chips-label {
+            font-size: 9.5px !important;
+            color: #454550 !important;
+            font-weight: 600;
+            letter-spacing: 0.07em;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -423,7 +444,7 @@ def _score_question_against_record(question: str, record: dict) -> tuple[float, 
     return score, excerpt.strip()
 
 
-def _run_question_tfidf(question: str) -> None:
+def _run_question_tfidf(question: str) -> tuple[str, list[str]]:
     records = load_records()
     scored = []
     for rec in records:
@@ -434,8 +455,7 @@ def _run_question_tfidf(question: str) -> None:
     top = scored[:4]
 
     if not top:
-        st.warning("No strong evidence matched. Ingest some documents first via **Ingestion Hub**.")
-        return
+        return "No strong evidence matched. Ingest some documents first via **Ingestion Hub**.", []
 
     top_labels = Counter((rec.get("risk_label") or "Unknown") for _, _, rec in top)
     top_types = Counter((rec.get("document_type") or "Unknown") for _, _, rec in top)
@@ -452,67 +472,63 @@ def _run_question_tfidf(question: str) -> None:
         f"Key signals: {', '.join(k for k, _ in flagged.most_common(6)) or 'none'}. "
         f"Document types: {', '.join(f'{k} ({v})' for k, v in top_types.items())}."
     )
-    st.markdown(answer)
-
-    st.markdown("<div style='margin-top:1.25rem;font-weight:600;color:#eef2ff;'>Evidence</div>", unsafe_allow_html=True)
-    for score, excerpt, rec in top:
-        label = rec.get("risk_label") or "Unknown"
-        with st.expander(f"{rec.get('file_name')}  —  {label} risk ({rec.get('risk_score', 0)})"):
-            st.write(f"**Document type:** {rec.get('document_type') or 'Unknown'}")
-            st.write(f"**Relevance score:** {score:.3f}")
-            if excerpt:
-                st.write(f"**Matched excerpt:** {excerpt}")
-            st.write(f"**Management takeaway:** {rec.get('management_takeaway') or '—'}")
+    sources = [rec.get("file_name", "") for _, _, rec in top if rec.get("file_name")]
+    return answer, sources
 
 
 # ---------------------------------------------------------------------------
 # Q&A: RAG path
 # ---------------------------------------------------------------------------
 
-def _run_question_rag(question: str) -> None:
+def _run_question_rag(question: str) -> tuple[str, list[str]] | None:
     llm = _get_llm()
     if llm is None:
-        st.warning("Could not initialise the AI model. Falling back to keyword search.")
-        _run_question_tfidf(question)
-        return
+        return None
 
-    with st.spinner("Thinking…"):
-        try:
-            result = ask_with_rag(
-                question=question,
-                llm=llm,
-                persist_dir=_chroma_dir(),
-                top_k=8,
-                chat_history=st.session_state.chat_history,
-            )
-        except Exception as exc:
-            st.warning(f"AI answer failed ({exc}). Falling back to keyword search.")
-            _run_question_tfidf(question)
-            return
+    try:
+        result = ask_with_rag(
+            question=question,
+            llm=llm,
+            persist_dir=_chroma_dir(),
+            top_k=8,
+            chat_history=st.session_state.chat_history,
+        )
+    except Exception as exc:
+        st.warning(f"AI answer failed ({exc}). Falling back to keyword search.")
+        return None
 
-    st.markdown(result["answer"])
-
-    if result["sources"]:
-        with st.expander(f"Sources used ({result['chunks_used']} chunks from {len(result['sources'])} file(s))"):
-            for chunk in result["chunks"]:
-                fname = chunk["metadata"].get("file_name", "unknown")
-                st.markdown(f"**{fname}** — chunk {chunk['metadata'].get('chunk_index', '?')+1}/{chunk['metadata'].get('total_chunks', '?')}")
-                st.caption(chunk["text"][:300] + ("…" if len(chunk["text"]) > 300 else ""))
-                st.divider()
-
-    # Store in chat history
-    st.session_state.chat_history.append({"role": "user", "content": question, "sources": []})
-    st.session_state.chat_history.append({"role": "assistant", "content": result["answer"], "sources": result["sources"]})
+    return result["answer"], result["sources"]
 
 
 def _run_question(question: str) -> None:
     chroma_ok, ollama_ok = _check_rag()
+    now = datetime.now().strftime("%H:%M")
+
+    st.session_state.chat_history.append({"role": "user", "content": question, "sources": [], "time": now})
+
+    answer: str | None = None
+    sources: list[str] = []
+
     if chroma_ok and ollama_ok:
-        _run_question_rag(question)
-    else:
+        with st.spinner("Thinking…"):
+            rag_result = _run_question_rag(question)
+        if rag_result:
+            answer, sources = rag_result
+
+    if answer is None:
+        tfidf_answer, tfidf_sources = _run_question_tfidf(question)
         if chroma_ok and not ollama_ok:
-            st.warning("Ollama is not running — using keyword search. Start Ollama and refresh for AI-powered answers.")
-        _run_question_tfidf(question)
+            answer = "⚠️ *Ollama offline — using keyword search. Start Ollama for AI-powered answers.*\n\n" + tfidf_answer
+        else:
+            answer = tfidf_answer
+        sources = tfidf_sources
+
+    st.session_state.chat_history.append({
+        "role": "assistant",
+        "content": answer,
+        "sources": sources,
+        "time": now,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -774,19 +790,30 @@ def render_file_explorer() -> None:
 # Page: Ask Questions
 # ---------------------------------------------------------------------------
 
+def _source_chips_html(sources: list[str]) -> str:
+    if not sources:
+        return ""
+    chips = "".join(f'<span class="src-chip">{fname}</span>' for fname in sources)
+    return (
+        '<div style="margin-top:10px;padding-left:2px;">'
+        '<div class="src-chips-label">SOURCES</div>'
+        f'{chips}</div>'
+    )
+
+
 def render_questions() -> None:
     log_audit("open_page", "Ask Questions", "Opened page Ask Questions")
-    chroma_ok, ollama_ok = _check_rag()
+    _check_rag()
 
-    q = st.session_state.get("_q_question", "")
+    messages = st.session_state.chat_history
 
-    if not q:
+    if not messages:
         st.markdown(
             """
             <div style="
-                display: flex; flex-direction: column; align-items: center;
-                justify-content: center; min-height: 52vh; text-align: center;
-                padding: 2rem 1rem 1.5rem;
+                display:flex;flex-direction:column;align-items:center;
+                justify-content:center;min-height:52vh;text-align:center;
+                padding:2rem 1rem 1.5rem;
             ">
                 <div style="font-size:2.6rem;font-weight:800;letter-spacing:-0.03em;color:#eef2ff;margin-bottom:0.6rem;">
                     INSIGHT.AI
@@ -803,76 +830,26 @@ def render_questions() -> None:
             with (c1 if i % 2 == 0 else c2):
                 st.markdown('<div class="suggestion-btn">', unsafe_allow_html=True)
                 if st.button(s, key=f"q_{i}", use_container_width=True):
-                    st.session_state._q_question = s
+                    log_audit("ask_question", "Ask Questions", s)
+                    _run_question(s)
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        for msg in messages:
+            if msg["role"] == "user":
+                with st.chat_message("user"):
+                    st.markdown(msg["content"])
+            else:
+                with st.chat_message("assistant"):
+                    st.markdown(msg["content"])
+                    sources = msg.get("sources") or []
+                    if sources:
+                        st.markdown(_source_chips_html(sources), unsafe_allow_html=True)
 
     if prompt := st.chat_input("Ask anything about your documents…"):
-        st.session_state._q_question = prompt
+        log_audit("ask_question", "Ask Questions", prompt)
+        _run_question(prompt)
         st.rerun()
-
-    if not q:
-        return
-
-    log_audit("ask_question", "Ask Questions", q)
-
-    if st.button("↩  New question", key="q_new"):
-        st.session_state._q_question = ""
-        st.rerun()
-
-    if chroma_ok and ollama_ok:
-        llm = _get_llm()
-        if llm:
-            with st.spinner("Thinking…"):
-                try:
-                    result = ask_with_rag(q, llm=llm, persist_dir=_chroma_dir(), top_k=8)
-                    render_card("Answer", result["answer"])
-                    if result["sources"]:
-                        st.markdown("### Evidence used")
-                        for chunk in result["chunks"]:
-                            fname = chunk["metadata"].get("file_name", "unknown")
-                            render_card(
-                                fname,
-                                f"<b>Chunk:</b> {chunk['metadata'].get('chunk_index', '?')+1}/{chunk['metadata'].get('total_chunks', '?')}<br>"
-                                f"<b>Excerpt:</b> {chunk['text'][:400]}",
-                            )
-                    return
-                except Exception as exc:
-                    st.warning(f"AI answer failed ({exc}). Falling back to keyword search.")
-
-    # Keyword fallback
-    records = load_records()
-    scored = []
-    for rec in records:
-        score, excerpt = _score_question_against_record(q, rec)
-        if score > 0:
-            scored.append((score, excerpt, rec))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:4]
-    if not top:
-        st.warning("No strong evidence matched the current question.")
-        return
-    top_labels = Counter((rec.get("risk_label") or "Unknown") for _, _, rec in top)
-    top_types = Counter((rec.get("document_type") or "Unknown") for _, _, rec in top)
-    risk_categories = Counter(cat for _, _, rec in top for cat in (rec.get("risk_categories") or []))
-    flagged = Counter(flag for _, _, rec in top for flag in (rec.get("flagged_phrases") or []))
-    conf = "High" if top[0][0] > 0.15 or len(top) >= 3 else "Moderate"
-    answer = (
-        f"Based on indexed evidence, the strongest signals are concentrated in {', '.join(rec.get('file_name') for _, _, rec in top[:3])}. "
-        f"Confidence: {conf}. Common risk levels: {', '.join(f'{k} ({v})' for k, v in top_labels.items())}. "
-        f"Dominant risk categories: {', '.join(k for k, _ in risk_categories.most_common(4))}. "
-        f"Most repeated signals: {', '.join(k for k, _ in flagged.most_common(6))}. "
-        f"Document types: {', '.join(f'{k} ({v})' for k, v in top_types.items())}."
-    )
-    render_card("Answer", answer)
-    st.markdown("### Evidence used")
-    for score, excerpt, rec in top:
-        render_card(
-            rec.get("file_name"),
-            f"<b>Relevance score:</b> {score:.2f}<br><b>Type:</b> {rec.get('document_type')}<br>"
-            f"<b>Risk:</b> {rec.get('risk_label')} ({rec.get('risk_score')})<br>"
-            f"<b>Excerpt:</b> {excerpt}<br><b>Management takeaway:</b> {rec.get('management_takeaway')}",
-        )
 
 
 # ---------------------------------------------------------------------------

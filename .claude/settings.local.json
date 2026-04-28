@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python -c \"import ast; ast.parse\\(open\\('app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(.venv/Scripts/activate)",
+      "Bash(pytest tests/test_llm_enricher.py -v)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_llm_enricher.py -v)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_llm_enricher.py -v)"
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
+  }
+}

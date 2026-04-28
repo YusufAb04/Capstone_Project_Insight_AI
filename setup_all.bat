@@ -3,7 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo ============================================
-echo   INSIGHT.AI - Setup
+echo   INSIGHT.AI - One-Click Setup
 echo   (This may take several minutes)
 echo ============================================
 echo.
@@ -42,7 +42,36 @@ pause
 exit /b 1
 
 :py_found
-echo        Python found: %PY_CMD%
+for /f "tokens=*" %%v in ('%PY_CMD% --version 2^>^&1') do set "PY_VER=%%v"
+echo        Python found: %PY_VER%
+
+REM ── Bootstrap pip on system Python if missing ─────────────────────────────
+echo        Ensuring pip is available...
+%PY_CMD% -m pip --version >nul 2>nul
+if errorlevel 1 (
+    echo        pip not found on system Python. Bootstrapping via ensurepip...
+    %PY_CMD% -m ensurepip --upgrade >nul 2>nul
+    if errorlevel 1 (
+        echo        ensurepip failed. Downloading get-pip.py from PyPA...
+        powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing"
+        if errorlevel 1 (
+            echo.
+            echo [ERROR] Could not download get-pip.py. Check your internet connection.
+            pause
+            exit /b 1
+        )
+        %PY_CMD% "%TEMP%\get-pip.py" --quiet
+        if errorlevel 1 (
+            echo.
+            echo [ERROR] Could not install pip. Ask your IT department to install Python with pip enabled.
+            pause
+            exit /b 1
+        )
+    )
+    echo        pip installed successfully.
+) else (
+    echo        pip is available.
+)
 
 REM ── Virtual environment ───────────────────────────────────────────────────
 if not exist ".venv\Scripts\python.exe" (
@@ -57,20 +86,46 @@ if not exist ".venv\Scripts\python.exe" (
     echo [2/7] Virtual environment already exists, skipping.
 )
 
+REM ── Bootstrap pip inside the venv if missing ──────────────────────────────
+".venv\Scripts\python.exe" -m pip --version >nul 2>nul
+if errorlevel 1 (
+    echo        pip missing inside venv. Bootstrapping...
+    ".venv\Scripts\python.exe" -m ensurepip --upgrade >nul 2>nul
+    if errorlevel 1 (
+        echo        ensurepip failed in venv. Trying get-pip.py...
+        powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing"
+        ".venv\Scripts\python.exe" "%TEMP%\get-pip.py" --quiet
+        if errorlevel 1 (
+            echo.
+            echo [ERROR] Could not install pip inside the virtual environment.
+            pause
+            exit /b 1
+        )
+    )
+    echo        pip bootstrapped inside venv.
+)
+
 REM ── pip upgrade ───────────────────────────────────────────────────────────
 echo [3/7] Upgrading pip...
-call ".venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
+call ".venv\Scripts\python.exe" -m pip install --upgrade pip --quiet --prefer-binary
 if errorlevel 1 (
     echo [WARNING] pip upgrade failed, continuing anyway.
 )
 
 REM ── All packages ──────────────────────────────────────────────────────────
 echo [4/7] Installing all required packages...
+echo        Using pre-built binary wheels (no C++ compiler needed).
 echo        This may take several minutes on first run.
-call ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+echo.
+call ".venv\Scripts\python.exe" -m pip install --prefer-binary -r requirements.txt
 if errorlevel 1 (
     echo.
     echo [ERROR] Package installation failed. See output above for details.
+    echo.
+    echo Common causes:
+    echo   - No internet connection
+    echo   - University firewall blocking PyPI
+    echo   - Disk space too low
     pause
     exit /b 1
 )
