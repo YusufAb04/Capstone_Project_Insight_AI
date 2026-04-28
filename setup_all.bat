@@ -45,6 +45,27 @@ exit /b 1
 for /f "tokens=*" %%v in ('%PY_CMD% --version 2^>^&1') do set "PY_VER=%%v"
 echo        Python found: %PY_VER%
 
+REM ── 64-bit Python check ───────────────────────────────────────────────────
+echo        Checking Python architecture (must be 64-bit)...
+for /f %%b in ('%PY_CMD% -c "import struct; print(struct.calcsize(\"P\")*8)"') do set "PY_BITS=%%b"
+if not "!PY_BITS!"=="64" (
+    echo.
+    echo [ERROR] You have 32-bit Python installed, but this app requires 64-bit Python.
+    echo.
+    echo Several packages (chromadb, sentence-transformers) only ship pre-built
+    echo binaries for 64-bit Windows. On 32-bit Python they try to compile from
+    echo source and require a C++ compiler, which is not installed here.
+    echo.
+    echo Please install the 64-bit version of Python 3.12 from:
+    echo   https://www.python.org/downloads/release/python-31211/
+    echo   ^(choose "Windows installer (64-bit)"^)
+    echo Make sure to tick "Add Python to PATH" during install.
+    echo Then delete the .venv folder here and run this file again.
+    pause
+    exit /b 1
+)
+echo        Architecture: 64-bit OK.
+
 REM ── Bootstrap pip on system Python if missing ─────────────────────────────
 echo        Ensuring pip is available...
 %PY_CMD% -m pip --version >nul 2>nul
@@ -112,10 +133,28 @@ if errorlevel 1 (
     echo [WARNING] pip upgrade failed, continuing anyway.
 )
 
-REM ── All packages ──────────────────────────────────────────────────────────
+REM ── Pre-install chroma-hnswlib (binary-only, catches C++ issues early) ────
 echo [4/7] Installing all required packages...
-echo        Using pre-built binary wheels (no C++ compiler needed).
-echo        This may take several minutes on first run.
+echo        Step 4a: Pre-installing chroma-hnswlib (binary wheel only, no compilation)...
+call ".venv\Scripts\python.exe" -m pip install --only-binary=:all: "chroma-hnswlib>=0.7.3,<0.7.7" --quiet
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Could not find a pre-built binary for chroma-hnswlib.
+    echo.
+    echo This almost always means you have 32-bit Python installed.
+    echo chroma-hnswlib only ships 64-bit binaries for Windows.
+    echo.
+    echo Fix: Install 64-bit Python 3.12 from:
+    echo   https://www.python.org/downloads/release/python-31211/
+    echo   ^(choose "Windows installer (64-bit)"^)
+    echo Tick "Add Python to PATH", delete the .venv folder, then re-run setup.
+    pause
+    exit /b 1
+)
+echo        chroma-hnswlib installed (no C++ needed).
+
+REM ── All remaining packages ────────────────────────────────────────────────
+echo        Step 4b: Installing remaining packages (this may take several minutes)...
 echo.
 call ".venv\Scripts\python.exe" -m pip install --prefer-binary -r requirements.txt
 if errorlevel 1 (
