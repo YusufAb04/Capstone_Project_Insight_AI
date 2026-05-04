@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
@@ -561,12 +562,7 @@ def run_due_schedules(db_path: str, progress_callback: ProgressCallback = None) 
 # ---------------------------------------------------------------------------
 
 def _extract_text_for_reingest(file_path: str) -> str:
-    """Extract plain text from *file_path* for re-ingestion into ChromaDB.
-
-    Uses process_file_path to extract and clean the text, then returns the
-    ``content`` field (the cleaned analysis text).  Returns an empty string
-    on any failure.
-    """
+    """Return cleaned text from file_path for re-ingestion, or empty string on failure."""
     try:
         result = process_file_path(file_path)
         return result.get("content", "") or ""
@@ -575,19 +571,7 @@ def _extract_text_for_reingest(file_path: str) -> str:
 
 
 def verify_chunk_counts(db_path: str, chroma_dir: str) -> list[dict]:
-    """Check every synced file in SQLite against the actual ChromaDB chunk count.
-
-    For each file where ``chroma_synced = 1``, queries ChromaDB for the real
-    chunk count.  If ChromaDB holds 0 chunks (silent write failure), resets
-    ``chroma_synced = 0`` and ``chunk_count = 0`` in SQLite so the file can be
-    re-ingested.
-
-    Returns a list of dicts with keys:
-        file_path        – path from the files table
-        db_chunk_count   – what SQLite recorded
-        chroma_chunk_count – actual count returned by ChromaDB
-        status           – "ok" or "broken"
-    """
+    """Compare SQLite chunk_count records against ChromaDB; reset broken entries."""
     conn = get_connection(db_path)
     cur = conn.cursor()
     cur.execute(
@@ -629,34 +613,20 @@ def verify_chunk_counts(db_path: str, chroma_dir: str) -> list[dict]:
             }
         )
 
+    conn.close()
     return results
 
 
 def reingest_single_file(db_path: str, file_path: str, chroma_dir: str) -> dict:
-    """Re-run chunking and embedding for a single file.
-
-    Steps:
-    1. Extract text from the file on disk.
-    2. If no text, return failure immediately.
-    3. Chunk the text.
-    4. Upsert chunks into ChromaDB.
-    5. Update SQLite: chunk_count and chroma_synced = 1.
-
-    Returns a dict with keys:
-        success     – bool
-        chunk_count – int (0 on failure)
-        error       – str (empty on success)
-    """
+    """Chunk and embed a single file; update SQLite chunk_count and chroma_synced."""
     try:
         text = _extract_text_for_reingest(file_path)
         if not text or not text.strip():
             return {"success": False, "chunk_count": 0, "error": "No text extracted"}
 
-        import os
         file_name = os.path.basename(file_path)
         chunks = chunk_text(text, file_path=file_path, file_name=file_name)
 
-        collection = get_collection(chroma_dir)
         upsert_document(chunks, persist_dir=chroma_dir)
 
         chunk_count = len(chunks)
