@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from typing import Literal
@@ -72,20 +74,28 @@ def check_chromadb(persist_dir: str) -> CheckResult:
             message="chromadb is not installed.",
             fix="Run: pip install chromadb==0.5.23",
         )
+    tmp = None
     try:
         import src.rag  # ensure pysqlite3 patch is applied before chromadb opens any db
-        with tempfile.TemporaryDirectory() as tmp:
-            client = _chromadb.PersistentClient(path=tmp)
-            col = client.get_or_create_collection("_health_test")
-            col.upsert(ids=["probe"], documents=["health check"], metadatas=[{"source": "health"}])
-            result = col.get(ids=["probe"])
-            if not result["ids"]:
-                raise RuntimeError("Write/read cycle produced no results")
+        tmp = tempfile.mkdtemp()
+        client = _chromadb.PersistentClient(path=tmp)
+        col = client.get_or_create_collection("_health_test")
+        col.upsert(ids=["probe"], documents=["health check"], metadatas=[{"source": "health"}])
+        result = col.get(ids=["probe"])
+        if not result["ids"]:
+            raise RuntimeError("Write/read cycle produced no results")
+        # Explicitly release file handles before temp dir removal — on Windows,
+        # ChromaDB keeps chroma.sqlite3 locked until the client is GC'd.
+        del col, client
+        gc.collect()
+
         chunk_count = 0
         try:
             real_client = _chromadb.PersistentClient(path=persist_dir)
             real_col = real_client.get_or_create_collection("insight_documents")
             chunk_count = real_col.count()
+            del real_col, real_client
+            gc.collect()
         except Exception:
             pass
         return CheckResult(
@@ -100,6 +110,9 @@ def check_chromadb(persist_dir: str) -> CheckResult:
             message=f"ChromaDB error: {exc}",
             fix="Run: pip install chromadb==0.5.23 pysqlite3-binary. Ensure the data/ folder is writable.",
         )
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def check_ollama(base_url: str = "http://localhost:11434", model: str = "llama3.2:3b") -> CheckResult:
