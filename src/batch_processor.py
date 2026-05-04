@@ -13,7 +13,7 @@ ProgressCallback = Optional[Callable[[int, int, str], None]]
 # RAG stack is optional — app runs without it if packages aren't installed
 try:
     from src.rag.chunker import chunk_text
-    from src.rag.vector_store import upsert_document, delete_by_file_path
+    from src.rag.vector_store import upsert_document, delete_by_file_path, get_collection
     _CHROMA_AVAILABLE = True
 except ImportError:
     _CHROMA_AVAILABLE = False
@@ -554,3 +554,120 @@ def run_due_schedules(db_path: str, progress_callback: ProgressCallback = None) 
         conn.close()
         ran += 1
     return ran
+
+
+# ---------------------------------------------------------------------------
+# Chunk verification and single-file re-ingestion
+# ---------------------------------------------------------------------------
+
+def _extract_text_for_reingest(file_path: str) -> str:
+    """Extract plain text from *file_path* for re-ingestion into ChromaDB.
+
+    Uses process_file_path to extract and clean the text, then returns the
+    ``content`` field (the cleaned analysis text).  Returns an empty string
+    on any failure.
+    """
+    try:
+        result = process_file_path(file_path)
+        return result.get("content", "") or ""
+    except Exception:
+        return ""
+
+
+def verify_chunk_counts(db_path: str, chroma_dir: str) -> list[dict]:
+    """Check every synced file in SQLite against the actual ChromaDB chunk count.
+
+    For each file where ``chroma_synced = 1``, queries ChromaDB for the real
+    chunk count.  If ChromaDB holds 0 chunks (silent write failure), resets
+    ``chroma_synced = 0`` and ``chunk_count = 0`` in SQLite so the file can be
+    re-ingested.
+
+    Returns a list of dicts with keys:
+        file_path        – path from the files table
+        db_chunk_count   – what SQLite recorded
+        chroma_chunk_count – actual count returned by ChromaDB
+        status           – "ok" or "broken"
+    """
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT file_path, chunk_count FROM files WHERE chroma_synced = 1"
+    )
+    rows = cur.fetchall()
+
+    collection = get_collection(chroma_dir)
+    results: list[dict] = []
+
+    for row in rows:
+        file_path = row[0]
+        db_chunk_count = row[1] or 0
+
+        chroma_result = collection.get(
+            where={"file_path": file_path},
+            include=[],  # ids only — fastest
+        )
+        chroma_ids = chroma_result.get("ids", []) if isinstance(chroma_result, dict) else list(chroma_result.ids)
+        chroma_chunk_count = len(chroma_ids)
+
+        if chroma_chunk_count == 0:
+            # Silent write failure — reset so re-ingestion can occur
+            conn.execute(
+                "UPDATE files SET chroma_synced = 0, chunk_count = 0 WHERE file_path = ?",
+                (file_path,),
+            )
+            conn.commit()
+            status = "broken"
+        else:
+            status = "ok"
+
+        results.append(
+            {
+                "file_path": file_path,
+                "db_chunk_count": db_chunk_count,
+                "chroma_chunk_count": chroma_chunk_count,
+                "status": status,
+            }
+        )
+
+    return results
+
+
+def reingest_single_file(db_path: str, file_path: str, chroma_dir: str) -> dict:
+    """Re-run chunking and embedding for a single file.
+
+    Steps:
+    1. Extract text from the file on disk.
+    2. If no text, return failure immediately.
+    3. Chunk the text.
+    4. Upsert chunks into ChromaDB.
+    5. Update SQLite: chunk_count and chroma_synced = 1.
+
+    Returns a dict with keys:
+        success     – bool
+        chunk_count – int (0 on failure)
+        error       – str (empty on success)
+    """
+    try:
+        text = _extract_text_for_reingest(file_path)
+        if not text or not text.strip():
+            return {"success": False, "chunk_count": 0, "error": "No text extracted"}
+
+        import os
+        file_name = os.path.basename(file_path)
+        chunks = chunk_text(text, file_path=file_path, file_name=file_name)
+
+        collection = get_collection(chroma_dir)
+        upsert_document(chunks, persist_dir=chroma_dir)
+
+        chunk_count = len(chunks)
+        conn = get_connection(db_path)
+        conn.execute(
+            "UPDATE files SET chunk_count = ?, chroma_synced = 1 WHERE file_path = ?",
+            (chunk_count, file_path),
+        )
+        conn.commit()
+        conn.close()
+
+        return {"success": True, "chunk_count": chunk_count, "error": ""}
+    except Exception as exc:
+        return {"success": False, "chunk_count": 0, "error": str(exc)}
