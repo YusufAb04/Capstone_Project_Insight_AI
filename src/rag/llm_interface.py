@@ -53,9 +53,9 @@ def _format_docs(chunks: list[dict]) -> str:
 
 # Cosine distance threshold above which a chunk is considered too dissimilar.
 # ChromaDB with hnsw:space="cosine" returns distances in [0, 2]; 0 = identical,
-# 2 = completely opposite.  0.8 is a generous cut-off: anything beyond it
-# rarely produces a useful answer.
-_LOW_SIMILARITY_THRESHOLD = 0.8
+# 2 = completely opposite. Finance/tabular data tends to produce higher distances
+# even for relevant content — 1.5 blocks only near-zero matches.
+_LOW_SIMILARITY_THRESHOLD = 1.5
 
 
 def _run_chain(chain, prompt_input: dict) -> str:
