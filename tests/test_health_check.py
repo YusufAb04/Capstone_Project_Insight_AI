@@ -59,6 +59,13 @@ def test_check_ollama_unreachable():
     assert "ollama serve" in result.fix
 
 
+def test_check_ollama_timeout():
+    with patch("src.health_check.requests.get", side_effect=requests.exceptions.Timeout()):
+        result = check_ollama("http://localhost:11434", "llama3.2:3b")
+    assert result.status == "warn"
+    assert "3 seconds" in result.message or "timeout" in result.message.lower()
+
+
 def test_check_disk_writable(tmp_path):
     result = check_disk(str(tmp_path / "data"))
     assert result.status == "ok"

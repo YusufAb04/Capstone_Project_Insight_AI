@@ -21,7 +21,7 @@ Status = Literal["ok", "warn", "fail"]
 
 _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 _EXPECTED_DIMS = 384
-_CLOUD_SYNC_MARKERS = ("onedrive", "google drive", "dropbox", "iclouddrive")
+_CLOUD_SYNC_MARKERS = ("onedrive", "google drive", "dropbox", "icloud drive")
 
 
 @dataclass
@@ -125,6 +125,13 @@ def check_ollama(base_url: str = "http://localhost:11434", model: str = "llama3.
             name="Ollama LLM",
             status="ok",
             message=f"Ollama running. Model '{model}' is available.",
+        )
+    except requests.exceptions.Timeout:
+        return CheckResult(
+            name="Ollama LLM",
+            status="warn",
+            message="Ollama is running but did not respond within 3 seconds.",
+            fix="Ollama may still be loading a model. Wait 10 seconds and run checks again.",
         )
     except requests.exceptions.ConnectionError:
         return CheckResult(
