@@ -46,6 +46,12 @@ try:
 except ImportError:
     _RAG_IMPORTS_OK = False
 
+try:
+    from src.health_check import run_all_checks, CheckResult
+    _HEALTH_CHECK_AVAILABLE = True
+except ImportError:
+    _HEALTH_CHECK_AVAILABLE = False
+
 st.set_page_config(
     page_title="INSIGHT.AI",
     page_icon="🧠",
@@ -803,6 +809,14 @@ def _source_chips_html(sources: list[str]) -> str:
 
 def render_questions() -> None:
     log_audit("open_page", "Ask Questions", "Opened page Ask Questions")
+
+    if get_setting(st.session_state.db_path, "health_check_any_failed", "0") == "1":
+        st.warning(
+            "⚠️ Setup incomplete — some components failed the last health check. "
+            "Go to **Operations → Setup Health Check** to fix them.",
+            icon="⚠️",
+        )
+
     _check_rag()
 
     messages = st.session_state.chat_history
@@ -859,7 +873,7 @@ def render_questions() -> None:
 def render_operations() -> None:
     log_audit("open_page", "Operations", "Opened page Operations")
     st.title("🛠️ Operations, Scheduling, Backup and Validation")
-    tabs = st.tabs(["Scheduled scans", "Backup & recovery", "OCR diagnostics", "Validation metrics", "AI / RAG Settings"])
+    tabs = st.tabs(["Scheduled scans", "Backup & recovery", "OCR diagnostics", "Validation metrics", "AI / RAG Settings", "Setup Health Check"])
 
     with tabs[0]:
         st.markdown("### Scheduled scan jobs")
@@ -1071,6 +1085,44 @@ def render_operations() -> None:
             "3. Ollama runs as a background service on `localhost:11434`\n"
             "4. Refresh this page — the status dot in the sidebar will turn green."
         )
+
+    with tabs[5]:
+        st.markdown("### Setup Health Check")
+        st.write("Verify all components are working correctly before ingesting documents on a new device.")
+
+        run_btn = st.button("▶ Run checks", type="primary")
+        auto_run = not get_setting(st.session_state.db_path, "health_check_passed", "")
+
+        if run_btn or (auto_run and "health_results" not in st.session_state):
+            if _HEALTH_CHECK_AVAILABLE:
+                with st.spinner("Checking components…"):
+                    results = run_all_checks(
+                        persist_dir=_chroma_dir(),
+                        base_url=get_setting(st.session_state.db_path, "ollama_base_url", "http://localhost:11434") or "http://localhost:11434",
+                        model=_ollama_model(),
+                        data_dir="data",
+                    )
+                st.session_state["health_results"] = results
+                any_failed = any(r.status == "fail" for r in results)
+                set_setting(st.session_state.db_path, "health_check_passed", "" if any_failed else "1")
+                set_setting(st.session_state.db_path, "health_check_any_failed", "1" if any_failed else "0")
+            else:
+                st.warning("health_check module not available.")
+
+        results = st.session_state.get("health_results", [])
+        if results:
+            _status_colors = {"ok": ("#86efac", "✅"), "warn": ("#fde047", "⚠️"), "fail": ("#fca5a5", "❌")}
+            for r in results:
+                color, icon = _status_colors.get(r.status, ("#c5cde0", "ℹ️"))
+                with st.container(border=True):
+                    st.markdown(f"{icon} **{r.name}** — <span style='color:{color}'>{r.message}</span>", unsafe_allow_html=True)
+                    if r.fix:
+                        st.info(f"💡 Fix: {r.fix}")
+            any_failed = any(r.status == "fail" for r in results)
+            if any_failed:
+                st.error("Fix the issues above before ingesting documents.")
+            else:
+                st.success("All checks passed. This device is ready.")
 
 
 # ---------------------------------------------------------------------------
