@@ -612,34 +612,35 @@ def render_ingestion() -> None:
             c4.metric("Total", stats["total_files"])
 
         # Chunk verification after ingestion
-        chroma_dir = get_setting(st.session_state.db_path, "chroma_dir", "data/chromadb")
-        try:
-            verify_results = verify_chunk_counts(st.session_state.db_path, chroma_dir)
-            if verify_results:
-                st.markdown("### Index verification")
-                ok_files = [r for r in verify_results if r["status"] == "ok"]
-                broken_files = [r for r in verify_results if r["status"] == "broken"]
-                total_chunks = sum(r["chroma_chunk_count"] for r in verify_results)
-                st.caption(
-                    f"{len(ok_files)} indexed OK / {len(broken_files)} with missing chunks / total {total_chunks} chunks"
-                )
-                for r in verify_results:
-                    filename = Path(r["file_path"]).name
-                    if r["status"] == "ok":
-                        st.success(f"✅ {filename} — {r['chroma_chunk_count']} chunks")
-                    else:
-                        st.error(f"❌ {filename} — 0 chunks, not searchable")
-                        if st.button(f"↺ Re-ingest {filename}", key=f"reingest_{r['file_path']}"):
-                            with st.spinner(f"Re-ingesting {filename}…"):
-                                result = reingest_single_file(
-                                    st.session_state.db_path, r["file_path"], chroma_dir
-                                )
-                            if result["success"]:
-                                st.success(f"Re-ingested: {result['chunk_count']} chunks")
-                            else:
-                                st.error(f"Re-ingest failed: {result['error']}")
-        except Exception as exc:
-            st.warning(f"Chunk verification unavailable: {exc}")
+        if _CHROMA_AVAILABLE and _RAG_IMPORTS_OK:
+            chroma_dir = _chroma_dir()
+            try:
+                verify_results = verify_chunk_counts(st.session_state.db_path, chroma_dir)
+                if verify_results:
+                    st.markdown("### Index verification")
+                    ok_files = [r for r in verify_results if r["status"] == "ok"]
+                    broken_files = [r for r in verify_results if r["status"] == "broken"]
+                    total_chunks = sum(r["chroma_chunk_count"] for r in verify_results)
+                    st.caption(
+                        f"{len(ok_files)} indexed OK / {len(broken_files)} with missing chunks / total {total_chunks} chunks"
+                    )
+                    for r in verify_results:
+                        filename = Path(r["file_path"]).name
+                        if r["status"] == "ok":
+                            st.success(f"✅ {filename} — {r['chroma_chunk_count']} chunks")
+                        else:
+                            st.error(f"❌ {filename} — 0 chunks, not searchable")
+                            if st.button(f"↺ Re-ingest {filename}", key=f"reingest_{r['file_path']}"):
+                                with st.spinner(f"Re-ingesting {filename}…"):
+                                    result = reingest_single_file(
+                                        st.session_state.db_path, r["file_path"], chroma_dir
+                                    )
+                                if result["success"]:
+                                    st.success(f"Re-ingested: {result['chunk_count']} chunks")
+                                else:
+                                    st.error(f"Re-ingest failed: {result['error']}")
+            except Exception:
+                st.warning("Index verification is unavailable. Check that ChromaDB is accessible.")
 
 
 # ---------------------------------------------------------------------------
@@ -1077,10 +1078,9 @@ def render_operations() -> None:
         st.divider()
         st.markdown("### Index verification")
         if st.button("🔍 Verify & repair index"):
-            _chroma_dir_ops = get_setting(st.session_state.db_path, "chroma_dir", "data/chromadb")
             try:
                 with st.spinner("Verifying chunk counts…"):
-                    verify_results = verify_chunk_counts(st.session_state.db_path, _chroma_dir_ops)
+                    verify_results = verify_chunk_counts(st.session_state.db_path, _chroma_dir())
                 if verify_results:
                     broken_ops = [r for r in verify_results if r["status"] == "broken"]
                     table_rows = [
@@ -1102,8 +1102,8 @@ def render_operations() -> None:
                         st.success("All indexed files verified — no missing chunks.")
                 else:
                     st.info("No indexed files found to verify.")
-            except Exception as exc:
-                st.warning(f"Chunk verification unavailable: {exc}")
+            except Exception:
+                st.warning("Index verification is unavailable. Check that ChromaDB is accessible.")
 
         st.divider()
         st.markdown("### Batch AI Enrichment")
