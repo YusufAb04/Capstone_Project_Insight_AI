@@ -17,13 +17,11 @@ On Windows you can also double-click `run.bat`.
 ## Installing Dependencies
 
 ```bash
-# Core
-pip install streamlit pandas PyPDF2 python-docx scikit-learn
+pip install -r requirements.txt
+```
 
-# RAG stack (required for AI-powered Q&A)
-pip install chromadb==0.5.23 langchain==0.3.25 langchain-community==0.3.25 langchain-ollama==0.2.5 langchain-text-splitters==0.3.8 sentence-transformers pysqlite3-binary
-
-# Optional OCR
+For optional OCR support:
+```bash
 pip install pytesseract pdf2image pillow
 ```
 
