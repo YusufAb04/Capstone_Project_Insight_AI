@@ -812,7 +812,7 @@ def render_questions() -> None:
 
     if get_setting(st.session_state.db_path, "health_check_any_failed", "0") == "1":
         st.warning(
-            "⚠️ Setup incomplete — some components failed the last health check. "
+            "Setup incomplete — some components failed the last health check. "
             "Go to **Operations → Setup Health Check** to fix them.",
             icon="⚠️",
         )
