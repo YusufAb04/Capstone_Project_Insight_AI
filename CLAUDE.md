@@ -17,6 +17,9 @@ On Windows you can also double-click `run.bat`.
 ## Installing Dependencies
 
 ```bash
+# Activate the virtual environment first
+.venv/Scripts/activate   # Windows bash
+
 pip install -r requirements.txt
 ```
 

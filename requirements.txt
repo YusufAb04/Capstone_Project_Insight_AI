@@ -8,7 +8,8 @@ requests==2.33.1
 chromadb==0.5.23
 langchain==0.3.25
 langchain-community==0.3.25
-langchain-ollama==0.2.3
+langchain-ollama==0.2.3  # 0.2.5 in old docs was incorrect; 0.2.3 is the confirmed working version
 langchain-text-splitters==0.3.8
 sentence-transformers==5.4.1
+# pysqlite3-binary has no Windows wheel; no version pin possible from Windows — pin on first Linux install
 pysqlite3-binary; sys_platform != "win32"
