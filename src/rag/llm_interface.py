@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import requests
+import httpx
 
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
@@ -50,6 +51,22 @@ def _format_docs(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+# Cosine distance threshold above which a chunk is considered too dissimilar.
+# ChromaDB with hnsw:space="cosine" returns distances in [0, 2]; 0 = identical,
+# 2 = completely opposite.  0.8 is a generous cut-off: anything beyond it
+# rarely produces a useful answer.
+_LOW_SIMILARITY_THRESHOLD = 0.8
+
+
+def _run_chain(chain, prompt_input: dict) -> str:
+    """Invoke *chain* and return the string result.
+
+    Isolated here so tests can mock it cleanly and so timeout exceptions are
+    caught in a single place.
+    """
+    return chain.invoke(prompt_input)
+
+
 def ask_with_rag(
     question: str,
     llm: ChatOllama,
@@ -59,20 +76,32 @@ def ask_with_rag(
 ) -> dict:
     """Run a RAG query and return the answer with source references.
 
-    Returns:
+    Returns a dict with keys:
         answer       — LLM-generated answer string
         sources      — list of unique file names cited
         chunks_used  — number of chunks retrieved
         chunks       — raw chunk dicts (for UI display)
+        error_type   — None | "no_chunks" | "low_similarity" | "ollama_timeout"
     """
     chunks = similarity_search(question, top_k=top_k, persist_dir=persist_dir)
 
     if not chunks:
         return {
-            "answer": "No documents have been indexed yet. Please ingest some files via the Ingestion Hub first.",
+            "answer": "No searchable content found.",
             "sources": [],
             "chunks_used": 0,
             "chunks": [],
+            "error_type": "no_chunks",
+        }
+
+    # Reject results where every chunk is too far from the query.
+    if all(c.get("distance", 0.0) > _LOW_SIMILARITY_THRESHOLD for c in chunks):
+        return {
+            "answer": "Found content but nothing closely matched your question.",
+            "sources": [],
+            "chunks_used": len(chunks),
+            "chunks": chunks,
+            "error_type": "low_similarity",
         }
 
     context = _format_docs(chunks)
@@ -92,7 +121,29 @@ def ask_with_rag(
     }
 
     chain = _RAG_PROMPT | llm | StrOutputParser()
-    answer = chain.invoke(prompt_input)
+
+    try:
+        answer = _run_chain(chain, prompt_input)
+    except (httpx.TimeoutException, requests.exceptions.Timeout) as exc:
+        return {
+            "answer": "Ollama took too long to respond.",
+            "sources": [],
+            "chunks_used": len(chunks),
+            "chunks": chunks,
+            "error_type": "ollama_timeout",
+        }
+    except Exception as exc:
+        # Catch any other exception whose message mentions "timeout" as a
+        # safety net for future transport changes.
+        if "timeout" in str(exc).lower():
+            return {
+                "answer": "Ollama took too long to respond.",
+                "sources": [],
+                "chunks_used": len(chunks),
+                "chunks": chunks,
+                "error_type": "ollama_timeout",
+            }
+        raise
 
     sources = list({c["metadata"].get("file_name", "unknown") for c in chunks})
 
@@ -101,4 +152,5 @@ def ask_with_rag(
         "sources": sources,
         "chunks_used": len(chunks),
         "chunks": chunks,
+        "error_type": None,
     }
