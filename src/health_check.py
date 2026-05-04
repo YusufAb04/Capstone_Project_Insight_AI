@@ -79,7 +79,7 @@ def check_chromadb(persist_dir: str) -> CheckResult:
         import src.rag  # ensure pysqlite3 patch is applied before chromadb opens any db
         tmp = tempfile.mkdtemp()
         client = _chromadb.PersistentClient(path=tmp)
-        col = client.get_or_create_collection("_health_test")
+        col = client.get_or_create_collection("health-test")
         col.upsert(ids=["probe"], documents=["health check"], metadatas=[{"source": "health"}])
         result = col.get(ids=["probe"])
         if not result["ids"]:
