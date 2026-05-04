@@ -526,17 +526,20 @@ def _run_question(question: str) -> None:
             sources = rag_result.get("sources") or []
             error_type = rag_result.get("error_type")
 
-    if answer is None and error_type is None:
+    if (answer is None and error_type is None) or error_type == "ollama_timeout":
         tfidf_answer, tfidf_sources = _run_question_tfidf(question)
-        if chroma_ok and not ollama_ok:
+        if error_type == "ollama_timeout":
+            answer = "⚠️ *Ollama timed out — using keyword search.*\n\n" + tfidf_answer
+        elif chroma_ok and not ollama_ok:
             answer = "⚠️ *Ollama offline — using keyword search. Start Ollama for AI-powered answers.*\n\n" + tfidf_answer
         else:
             answer = tfidf_answer
         sources = tfidf_sources
+        error_type = None
 
     st.session_state.chat_history.append({
         "role": "assistant",
-        "content": answer or "",
+        "content": answer if error_type is None else "",
         "sources": sources,
         "time": now,
         "error_type": error_type,
