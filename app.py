@@ -488,7 +488,7 @@ def _run_question_tfidf(question: str) -> tuple[str, list[str]]:
 # Q&A: RAG path
 # ---------------------------------------------------------------------------
 
-def _run_question_rag(question: str) -> tuple[str, list[str]] | None:
+def _run_question_rag(question: str) -> dict | None:
     llm = _get_llm()
     if llm is None:
         return None
@@ -505,7 +505,7 @@ def _run_question_rag(question: str) -> tuple[str, list[str]] | None:
         st.warning(f"AI answer failed ({exc}). Falling back to keyword search.")
         return None
 
-    return result["answer"], result["sources"]
+    return result
 
 
 def _run_question(question: str) -> None:
@@ -516,14 +516,17 @@ def _run_question(question: str) -> None:
 
     answer: str | None = None
     sources: list[str] = []
+    error_type: str | None = None
 
     if chroma_ok and ollama_ok:
         with st.spinner("Thinking…"):
             rag_result = _run_question_rag(question)
         if rag_result:
-            answer, sources = rag_result
+            answer = rag_result.get("answer")
+            sources = rag_result.get("sources") or []
+            error_type = rag_result.get("error_type")
 
-    if answer is None:
+    if answer is None and error_type is None:
         tfidf_answer, tfidf_sources = _run_question_tfidf(question)
         if chroma_ok and not ollama_ok:
             answer = "⚠️ *Ollama offline — using keyword search. Start Ollama for AI-powered answers.*\n\n" + tfidf_answer
@@ -533,9 +536,10 @@ def _run_question(question: str) -> None:
 
     st.session_state.chat_history.append({
         "role": "assistant",
-        "content": answer,
+        "content": answer or "",
         "sources": sources,
         "time": now,
+        "error_type": error_type,
     })
 
 
@@ -888,7 +892,15 @@ def render_questions() -> None:
                     st.markdown(msg["content"])
             else:
                 with st.chat_message("assistant"):
-                    st.markdown(msg["content"])
+                    error_type = msg.get("error_type")
+                    if error_type == "no_chunks":
+                        st.error("No searchable content found. This file has 0 chunks — go to Ingestion Hub and re-ingest it.")
+                    elif error_type == "low_similarity":
+                        st.warning("Found content but nothing closely matched your question. Try rephrasing or ask about a specific section.")
+                    elif error_type == "ollama_timeout":
+                        st.error("Ollama took too long to respond. Check it's running: open a terminal and run `ollama serve`.")
+                    else:
+                        st.markdown(msg["content"])
                     sources = msg.get("sources") or []
                     if sources:
                         st.markdown(_source_chips_html(sources), unsafe_allow_html=True)
