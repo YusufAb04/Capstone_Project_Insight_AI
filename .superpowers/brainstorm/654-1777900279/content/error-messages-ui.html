@@ -1,0 +1,64 @@
+<h2>Honest Error Messages — Before vs. After</h2>
+<p class="subtitle">When RAG can't find a good answer, tell the user exactly why and what to do.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">❌ Before (current)</div>
+    <div class="mockup-body" style="padding:16px;font-size:13px;">
+      <div style="display:flex;gap:10px;margin-bottom:12px;">
+        <div style="color:#6b7694;font-size:12px;">You</div>
+        <div style="color:#eef2ff;">What are the key risks in risk_assessment_v3.pdf?</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <div style="color:#6b7694;font-size:12px;">AI</div>
+        <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;color:#c5cde0;font-size:12px;">
+          The indexed documents don't have enough information to answer this question.
+        </div>
+      </div>
+      <div style="margin-top:16px;color:#6b7694;font-size:11px;font-style:italic;">
+        User has no idea why. Is Ollama broken? Is the file not indexed? Did they ask wrong?
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">✅ After (new)</div>
+    <div class="mockup-body" style="padding:16px;font-size:13px;">
+      <div style="display:flex;gap:10px;margin-bottom:12px;">
+        <div style="color:#6b7694;font-size:12px;">You</div>
+        <div style="color:#eef2ff;">What are the key risks in risk_assessment_v3.pdf?</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <div style="color:#6b7694;font-size:12px;">AI</div>
+        <div style="display:flex;flex-direction:column;gap:8px;flex:1;">
+          <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;padding:10px 12px;color:#fca5a5;font-size:12px;">
+            ❌ No searchable chunks found for this file.
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;color:#c5cde0;font-size:12px;line-height:1.6;">
+            <strong style="color:#eef2ff;">risk_assessment_v3.pdf</strong> was indexed but its content was not stored in the vector database — this usually happens when ChromaDB encounters a write error during ingestion.
+            <br><br>
+            <strong style="color:#fde047;">Fix:</strong> Go to <u>Ingestion Hub</u> and re-ingest this file, or use <u>Operations → AI / RAG Settings → Verify & repair index</u>.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px;">
+  <h3>Three specific error states (replacing the single generic message)</h3>
+  <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 14px;">
+      <span style="color:#fca5a5;font-weight:600;">❌ Zero chunks found</span>
+      <span style="color:#6b7694;margin-left:8px;">→ "This file has no searchable content. Re-ingest it from Ingestion Hub."</span>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 14px;">
+      <span style="color:#fde047;font-weight:600;">⚠️ Low similarity score</span>
+      <span style="color:#6b7694;margin-left:8px;">→ "Found chunks but none closely matched your question. Try rephrasing or asking about a specific section."</span>
+    </div>
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 14px;">
+      <span style="color:#fde047;font-weight:600;">⚠️ Ollama timeout</span>
+      <span style="color:#6b7694;margin-left:8px;">→ "Ollama took too long to respond. Check that it's running: open a terminal and run <code>ollama serve</code>."</span>
+    </div>
+  </div>
+</div>

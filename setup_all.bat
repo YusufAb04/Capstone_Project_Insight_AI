@@ -35,7 +35,7 @@ echo This app requires Python 3.10, 3.11, or 3.12.
 echo Python 3.13+ is NOT supported yet (packages lack pre-built wheels).
 echo.
 echo Please download Python 3.12 from:
-echo   https://www.python.org/downloads/release/python-31211/
+echo   https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
 echo Make sure to tick "Add Python to PATH" during install.
 echo Then run this file again.
 pause
@@ -47,7 +47,7 @@ echo        Python found: %PY_VER%
 
 REM ── 64-bit Python check ───────────────────────────────────────────────────
 echo        Checking Python architecture (must be 64-bit)...
-for /f %%b in ('%PY_CMD% -c "import struct; print(struct.calcsize(\"P\")*8)"') do set "PY_BITS=%%b"
+for /f %%b in ('%PY_CMD% -c "import sys; print(64 if sys.maxsize > 2**32 else 32)"') do set "PY_BITS=%%b"
 if not "!PY_BITS!"=="64" (
     echo.
     echo [ERROR] You have 32-bit Python installed, but this app requires 64-bit Python.
@@ -57,8 +57,7 @@ if not "!PY_BITS!"=="64" (
     echo source and require a C++ compiler, which is not installed here.
     echo.
     echo Please install the 64-bit version of Python 3.12 from:
-    echo   https://www.python.org/downloads/release/python-31211/
-    echo   ^(choose "Windows installer (64-bit)"^)
+    echo   https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
     echo Make sure to tick "Add Python to PATH" during install.
     echo Then delete the .venv folder here and run this file again.
     pause
@@ -145,8 +144,7 @@ if errorlevel 1 (
     echo chroma-hnswlib only ships 64-bit binaries for Windows.
     echo.
     echo Fix: Install 64-bit Python 3.12 from:
-    echo   https://www.python.org/downloads/release/python-31211/
-    echo   ^(choose "Windows installer (64-bit)"^)
+    echo   https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
     echo Tick "Add Python to PATH", delete the .venv folder, then re-run setup.
     pause
     exit /b 1
@@ -156,7 +154,7 @@ echo        chroma-hnswlib installed (no C++ needed).
 REM ── All remaining packages ────────────────────────────────────────────────
 echo        Step 4b: Installing remaining packages (this may take several minutes)...
 echo.
-call ".venv\Scripts\python.exe" -m pip install --prefer-binary -r requirements.txt
+call ".venv\Scripts\python.exe" -m pip install --only-binary=:all: -r requirements.txt
 if errorlevel 1 (
     echo.
     echo [ERROR] Package installation failed. See output above for details.

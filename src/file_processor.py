@@ -49,6 +49,15 @@ def extract_text_from_txt_bytes(data: bytes) -> str:
     return safe_decode(data)
 
 
+def _numeric_summary(df: pd.DataFrame) -> str:
+    """One-line totals for every numeric column; empty string if none."""
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    if not numeric_cols:
+        return ""
+    parts = [f"Total {col}: {df[col].sum()}" for col in numeric_cols]
+    return "Column totals: " + " | ".join(parts)
+
+
 def extract_text_from_csv_bytes(data: bytes) -> str:
     raw_text = safe_decode(data)
     if not raw_text:
@@ -68,12 +77,15 @@ def extract_text_from_csv_bytes(data: bytes) -> str:
     for _, row in df.fillna("").iterrows():
         row_text = " | ".join(f"{col}: {row[col]}" for col in df.columns)
         lines.append(row_text)
-    return "\n".join(lines).strip()
+    body = "\n".join(lines).strip()
+    summary = _numeric_summary(df)
+    return f"{summary}\n\n{body}" if summary else body
 
 
 def extract_text_from_xlsx_bytes(data: bytes) -> str:
     try:
         sheets = pd.read_excel(BytesIO(data), sheet_name=None, dtype=str)
+        sheets_numeric = pd.read_excel(BytesIO(data), sheet_name=None)
     except Exception as exc:
         return f"Excel file could not be read: {exc}"
     if not sheets:
@@ -84,6 +96,9 @@ def extract_text_from_xlsx_bytes(data: bytes) -> str:
         if df.empty:
             continue
         lines = [f"Sheet: {sheet_name}"]
+        summary = _numeric_summary(sheets_numeric.get(sheet_name, pd.DataFrame()).fillna(0))
+        if summary:
+            lines.append(summary)
         for _, row in df.iterrows():
             row_text = " | ".join(f"{col}: {row[col]}" for col in df.columns)
             lines.append(row_text)

@@ -248,7 +248,7 @@ def _get_llm():
 def render_sidebar() -> None:
     with st.sidebar:
         st.markdown(
-            "<div style='padding:14px 4px 4px;font-size:1.15rem;font-weight:700;color:#eef2ff;letter-spacing:-0.01em;'>🧠 INSIGHT.AI</div>",
+            "<div style='padding:14px 4px 4px;font-size:1.15rem;font-weight:700;color:#eef2ff;letter-spacing:-0.01em;'> INSIGHT.AI</div>",
             unsafe_allow_html=True,
         )
         st.caption("Document Intelligence")
@@ -265,12 +265,12 @@ def render_sidebar() -> None:
         st.divider()
 
         nav_items = [
-            ("🏠", "Ask Questions"),
-            ("📂", "Ingestion Hub"),
-            ("📈", "Executive Dashboard"),
-            ("🗂️", "File Explorer"),
-            ("🛠️", "Operations & Recovery"),
-            ("📝", "Reports and Logs"),
+            ("", "Ask Questions"),
+            ("", "Ingestion Hub"),
+            ("", "Executive Dashboard"),
+            ("", "File Explorer"),
+            ("", "Operations & Recovery"),
+            ("", "Reports and Logs"),
         ]
         for icon, name in nav_items:
             active = st.session_state.page == name
