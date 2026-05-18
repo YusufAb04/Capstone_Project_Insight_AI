@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from src.database import init_database, get_connection, get_setting
+from src.database import init_database, get_connection, get_setting, get_exclusion_keywords
 from src.folder_ingestion import scan_folder, compute_file_hash
 from src.file_processor import process_file_path, process_uploaded_file
 
@@ -31,6 +32,15 @@ except ImportError:
 
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _check_exclusion(filename: str, keywords: list[str]) -> Optional[str]:
+    """Return the matched exclusion keyword if filename contains it (case-insensitive), else None."""
+    lower = filename.lower()
+    for kw in keywords:
+        if kw.strip() and kw.strip().lower() in lower:
+            return kw.strip()
+    return None
 
 
 def load_ocr_config(db_path: str) -> dict:
@@ -220,7 +230,7 @@ def process_folder_to_db(
     mode: str = "Premium",
     recursive: bool = True,
     progress_callback: ProgressCallback = None,
-) -> int:
+) -> tuple[int, list[tuple[str, str]]]:
     init_database(db_path)
     conn = get_connection(db_path)
     discovered = scan_folder(folder_path, recursive=recursive)
@@ -228,11 +238,21 @@ def process_folder_to_db(
     ocr_config = load_ocr_config(db_path)
     llm = _get_ingestion_llm(db_path)
     chroma_dir = _load_chroma_dir(db_path)
+    exclusion_keywords = get_exclusion_keywords(db_path)
 
     processed = skipped = failed = 0
+    excluded: list[tuple[str, str]] = []
 
     for idx, meta in enumerate(discovered, start=1):
         file_path = meta["file_path"]
+
+        matched_kw = _check_exclusion(meta["file_name"], exclusion_keywords)
+        if matched_kw:
+            excluded.append((meta["file_name"], matched_kw))
+            if progress_callback:
+                progress_callback(idx, len(discovered), f"Excluded: {meta['file_name']} (keyword: {matched_kw})")
+            continue
+
         try:
             file_hash = compute_file_hash(file_path)
             if should_skip(conn, file_path, meta["modified_time"], file_hash):
@@ -282,7 +302,7 @@ def process_folder_to_db(
 
     finalize_run(conn, run_id, processed, skipped, failed, status="completed")
     conn.close()
-    return run_id
+    return run_id, excluded
 
 
 def process_uploaded_files_to_db(
@@ -290,7 +310,7 @@ def process_uploaded_files_to_db(
     db_path: str,
     mode: str = "Premium",
     progress_callback: ProgressCallback = None,
-) -> int:
+) -> tuple[int, list[tuple[str, str]]]:
     init_database(db_path)
     conn = get_connection(db_path)
     total = len(uploaded_files)
@@ -298,13 +318,25 @@ def process_uploaded_files_to_db(
     ocr_config = load_ocr_config(db_path)
     llm = _get_ingestion_llm(db_path)
     chroma_dir = _load_chroma_dir(db_path)
+    exclusion_keywords = get_exclusion_keywords(db_path)
 
     processed = skipped = failed = 0
+    excluded: list[tuple[str, str]] = []
 
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
         pseudo_path = f"uploaded://{uploaded_file.name}"
+
+        matched_kw = _check_exclusion(uploaded_file.name, exclusion_keywords)
+        if matched_kw:
+            excluded.append((uploaded_file.name, matched_kw))
+            if progress_callback:
+                progress_callback(idx, total, f"Excluded: {uploaded_file.name} (keyword: {matched_kw})")
+            continue
+
         try:
             result = process_uploaded_file(uploaded_file, mode=mode, ocr_config=ocr_config, llm=llm)
+            file_bytes = uploaded_file.getvalue()
+            file_hash = hashlib.sha256(file_bytes).hexdigest()
             chunk_count = _sync_to_chroma(result, pseudo_path, chroma_dir)
             chroma_synced = 1 if chunk_count > 0 else 0
 
@@ -313,9 +345,9 @@ def process_uploaded_files_to_db(
                 file_path=pseudo_path,
                 file_name=uploaded_file.name,
                 extension=result.get("filetype", ""),
-                file_size=len(uploaded_file.getvalue()),
+                file_size=len(file_bytes),
                 modified_time=0.0,
-                file_hash="uploaded-session",
+                file_hash=file_hash,
                 status="processed",
                 ocr_used=result.get("ocr_used", False),
                 chroma_synced=chroma_synced,
@@ -334,7 +366,7 @@ def process_uploaded_files_to_db(
 
     finalize_run(conn, run_id, processed, skipped, failed, status="completed")
     conn.close()
-    return run_id
+    return run_id, excluded
 
 
 def get_run_stats(db_path: str, run_id: int):

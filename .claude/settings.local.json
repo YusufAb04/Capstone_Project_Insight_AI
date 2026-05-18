@@ -6,7 +6,9 @@
       "Bash(pytest tests/test_llm_enricher.py -v)",
       "Bash(.venv/Scripts/pip install *)",
       "Bash(.venv/Scripts/python -m pytest tests/test_llm_enricher.py -v)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_llm_enricher.py -v)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_llm_enricher.py -v)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Projects\\\\INSIGHT_AI - Copy\" -Recurse -Filter \"app.py\")",
+      "Bash(Select-Object -First 5)"
     ]
   },
   "enabledPlugins": {

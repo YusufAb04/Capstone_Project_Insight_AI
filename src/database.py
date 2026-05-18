@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
@@ -229,6 +230,18 @@ def set_setting(db_path: str, key: str, value: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def get_exclusion_keywords(db_path: str) -> list[str]:
+    raw = get_setting(db_path, "exclusion_keywords", "[]")
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+
+
+def set_exclusion_keywords(db_path: str, keywords: list[str]) -> None:
+    set_setting(db_path, "exclusion_keywords", json.dumps(keywords))
 
 
 def backup_database(db_path: str, backup_path: str) -> str:
