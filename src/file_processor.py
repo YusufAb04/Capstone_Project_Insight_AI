@@ -8,6 +8,12 @@ import pandas as pd
 from PyPDF2 import PdfReader
 from docx import Document
 
+try:
+    import pdfplumber as _pdfplumber
+    _PDFPLUMBER = True
+except ImportError:
+    _PDFPLUMBER = False
+
 from src.classifier import classify_document
 from src.summarizer import summarize_text
 from src.keyword_extractor import extract_keywords
@@ -127,6 +133,48 @@ def ocr_pdf_bytes(data: bytes, *, dpi: int = 220, page_limit: int = 30) -> Tuple
     return merged, bool(merged)
 
 
+def _extract_pdf_tables_pdfplumber(data: bytes) -> str:
+    """Extract text + tables from a PDF using pdfplumber. Tables are formatted as pipe-separated rows."""
+    page_outputs = []
+    with _pdfplumber.open(BytesIO(data)) as pdf:
+        for page in pdf.pages:
+            parts = []
+
+            # Extract tables as structured rows first
+            tables = page.find_tables()
+            table_bboxes = [t.bbox for t in tables]
+            for t in tables:
+                rows = []
+                for row in t.extract():
+                    cells = [str(c).strip() if c is not None else "" for c in row]
+                    if any(cells):
+                        rows.append(" | ".join(cells))
+                if rows:
+                    parts.append("[Table]\n" + "\n".join(rows))
+
+            # Extract plain text outside table bounding boxes
+            if table_bboxes:
+                def _outside_tables(obj):
+                    x0, top = obj.get("x0", 0), obj.get("top", 0)
+                    x1, bottom = obj.get("x1", x0), obj.get("bottom", top)
+                    for bx0, btop, bx1, bbottom in table_bboxes:
+                        if x0 < bx1 and x1 > bx0 and top < bbottom and bottom > btop:
+                            return False
+                    return True
+                cropped = page.filter(_outside_tables)
+                plain = cropped.extract_text() or ""
+            else:
+                plain = page.extract_text() or ""
+
+            if plain.strip():
+                parts.append(plain.strip())
+
+            if parts:
+                page_outputs.append("\n\n".join(parts))
+
+    return "\n\n".join(page_outputs).strip()
+
+
 def extract_text_from_pdf_bytes(
     data: bytes,
     *,
@@ -135,6 +183,16 @@ def extract_text_from_pdf_bytes(
     ocr_dpi: int = 220,
     min_words_threshold: int = 30,
 ) -> Tuple[str, bool]:
+    # Try pdfplumber first — it preserves table structure
+    if _PDFPLUMBER:
+        try:
+            merged = _extract_pdf_tables_pdfplumber(data)
+            if len(merged.split()) >= max(1, min_words_threshold):
+                return merged, False
+        except Exception:
+            pass
+
+    # Fallback: PyPDF2 plain text extraction
     reader = PdfReader(BytesIO(data))
     pages_text = []
     for page in reader.pages:

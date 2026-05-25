@@ -491,7 +491,7 @@ def _run_question_tfidf(question: str) -> tuple[str, list[str]]:
 # Q&A: RAG path
 # ---------------------------------------------------------------------------
 
-def _run_question_rag(question: str) -> dict | None:
+def _run_question_rag(question: str, prior_history: list[dict] | None = None) -> dict | None:
     llm = _get_llm()
     if llm is None:
         return None
@@ -502,7 +502,7 @@ def _run_question_rag(question: str) -> dict | None:
             llm=llm,
             persist_dir=_chroma_dir(),
             top_k=8,
-            chat_history=st.session_state.chat_history,
+            chat_history=prior_history,
         )
     except Exception as exc:
         st.warning(f"AI answer failed ({exc}). Falling back to keyword search.")
@@ -515,6 +515,9 @@ def _run_question(question: str) -> None:
     chroma_ok, ollama_ok = _check_rag()
     now = datetime.now().strftime("%H:%M")
 
+    # Snapshot history before appending the current message so the RAG call
+    # only sees prior turns, not the question it's about to answer.
+    prior_history = list(st.session_state.chat_history)
     st.session_state.chat_history.append({"role": "user", "content": question, "sources": [], "time": now})
 
     answer: str | None = None
@@ -523,7 +526,7 @@ def _run_question(question: str) -> None:
 
     if chroma_ok and ollama_ok:
         with st.spinner("Thinking…"):
-            rag_result = _run_question_rag(question)
+            rag_result = _run_question_rag(question, prior_history=prior_history)
         if rag_result:
             answer = rag_result.get("answer")
             sources = rag_result.get("sources") or []
@@ -984,7 +987,7 @@ def render_questions() -> None:
 def render_operations() -> None:
     log_audit("open_page", "Operations", "Opened page Operations")
     st.title("🛠️ Operations, Scheduling, Backup and Validation")
-    tabs = st.tabs(["Scheduled scans", "Backup & recovery", "OCR diagnostics", "Validation metrics", "AI / RAG Settings", "Setup Health Check"])
+    tabs = st.tabs(["Scheduled scans", "Backup & recovery", "AI / RAG Settings", "Setup Health Check"])
 
     with tabs[0]:
         st.markdown("### Scheduled scan jobs")
@@ -1043,79 +1046,79 @@ def render_operations() -> None:
             st.success("Database restored.")
             log_audit("restore_database", st.session_state.db_path, f"Restored from {restore_file.name}")
 
+    # with tabs[2]:  # OCR diagnostics — temporarily hidden
+    #     status = ocr_status()
+    #     st.markdown("### OCR runtime diagnostics")
+    #     c1, c2, c3 = st.columns(3)
+    #     c1.metric("pytesseract", "Available" if status["pytesseract"] else "Missing")
+    #     c2.metric("pdf2image", "Available" if status["pdf2image"] else "Missing")
+    #     c3.metric("OCR ready", "Yes" if status["available"] else "No")
+    #     st.info("Full OCR requires native Tesseract OCR and Poppler installed on the host machine.")
+    #     enabled = st.checkbox("Enable OCR fallback", value=get_setting(st.session_state.db_path, "ocr_enabled", "1") == "1")
+    #     page_limit = st.number_input("OCR page limit per PDF", min_value=1, max_value=200, value=int(get_setting(st.session_state.db_path, "ocr_page_limit", "30")))
+    #     dpi = st.number_input("OCR DPI", min_value=100, max_value=400, value=int(get_setting(st.session_state.db_path, "ocr_dpi", "220")))
+    #     min_words = st.number_input("Min words before OCR fallback", min_value=1, max_value=500, value=int(get_setting(st.session_state.db_path, "ocr_min_words_threshold", "30")))
+    #     if st.button("Save OCR settings"):
+    #         set_setting(st.session_state.db_path, "ocr_enabled", "1" if enabled else "0")
+    #         set_setting(st.session_state.db_path, "ocr_page_limit", str(page_limit))
+    #         set_setting(st.session_state.db_path, "ocr_dpi", str(dpi))
+    #         set_setting(st.session_state.db_path, "ocr_min_words_threshold", str(min_words))
+    #         st.success("OCR settings saved.")
+
+    # with tabs[3]:  # Validation metrics — temporarily hidden
+    #     st.markdown("### Validation against labeled internal dataset")
+    #     st.write("Upload a CSV with columns: `file_name`, optional `expected_risk_label`, optional `expected_document_type`.")
+    #     val_file = st.file_uploader("Upload validation CSV", type=["csv"], key="val_csv")
+    #     if val_file is not None:
+    #         val_df = pd.read_csv(val_file)
+    #         st.dataframe(val_df.head(20), use_container_width=True, hide_index=True)
+    #         if st.button("Run validation"):
+    #             records = {r["file_name"]: r for r in load_records()}
+    #             total = matched = risk_ok = doc_ok = 0
+    #             details = []
+    #             for _, row in val_df.iterrows():
+    #                 fname = str(row.get("file_name", "")).strip()
+    #                 if not fname:
+    #                     continue
+    #                 total += 1
+    #                 rec = records.get(fname)
+    #                 if not rec:
+    #                     details.append([fname, row.get("expected_risk_label"), None, row.get("expected_document_type"), None, 0])
+    #                     continue
+    #                 matched += 1
+    #                 risk_match = (
+    #                     str(row.get("expected_risk_label", "")).strip().lower()
+    #                     == str(rec.get("risk_label", "")).strip().lower()
+    #                     if pd.notna(row.get("expected_risk_label")) and str(row.get("expected_risk_label", "")).strip()
+    #                     else None
+    #                 )
+    #                 doc_match = (
+    #                     str(row.get("expected_document_type", "")).strip().lower()
+    #                     == str(rec.get("document_type", "")).strip().lower()
+    #                     if pd.notna(row.get("expected_document_type")) and str(row.get("expected_document_type", "")).strip()
+    #                     else None
+    #                 )
+    #                 if risk_match is True:
+    #                     risk_ok += 1
+    #                 if doc_match is True:
+    #                     doc_ok += 1
+    #                 details.append([fname, row.get("expected_risk_label"), rec.get("risk_label"),
+    #                                  row.get("expected_document_type"), rec.get("document_type"),
+    #                                  1 if ((risk_match is True) or (doc_match is True)) else 0])
+    #             risk_acc = (risk_ok / max(sum(1 for x in val_df.get("expected_risk_label", []) if pd.notna(x) and str(x).strip()), 1)) * 100 if "expected_risk_label" in val_df.columns else 0
+    #             doc_acc = (doc_ok / max(sum(1 for x in val_df.get("expected_document_type", []) if pd.notna(x) and str(x).strip()), 1)) * 100 if "expected_document_type" in val_df.columns else 0
+    #             c1, c2, c3, c4 = st.columns(4)
+    #             c1.metric("Rows", total)
+    #             c2.metric("Matched", matched)
+    #             c3.metric("Risk accuracy", f"{risk_acc:.1f}%")
+    #             c4.metric("Doc type accuracy", f"{doc_acc:.1f}%")
+    #             st.dataframe(
+    #                 pd.DataFrame(details, columns=["file_name", "expected_risk_label", "predicted_risk_label",
+    #                                                "expected_document_type", "predicted_document_type", "matched"]),
+    #                 use_container_width=True, hide_index=True,
+    #             )
+
     with tabs[2]:
-        status = ocr_status()
-        st.markdown("### OCR runtime diagnostics")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("pytesseract", "Available" if status["pytesseract"] else "Missing")
-        c2.metric("pdf2image", "Available" if status["pdf2image"] else "Missing")
-        c3.metric("OCR ready", "Yes" if status["available"] else "No")
-        st.info("Full OCR requires native Tesseract OCR and Poppler installed on the host machine.")
-        enabled = st.checkbox("Enable OCR fallback", value=get_setting(st.session_state.db_path, "ocr_enabled", "1") == "1")
-        page_limit = st.number_input("OCR page limit per PDF", min_value=1, max_value=200, value=int(get_setting(st.session_state.db_path, "ocr_page_limit", "30")))
-        dpi = st.number_input("OCR DPI", min_value=100, max_value=400, value=int(get_setting(st.session_state.db_path, "ocr_dpi", "220")))
-        min_words = st.number_input("Min words before OCR fallback", min_value=1, max_value=500, value=int(get_setting(st.session_state.db_path, "ocr_min_words_threshold", "30")))
-        if st.button("Save OCR settings"):
-            set_setting(st.session_state.db_path, "ocr_enabled", "1" if enabled else "0")
-            set_setting(st.session_state.db_path, "ocr_page_limit", str(page_limit))
-            set_setting(st.session_state.db_path, "ocr_dpi", str(dpi))
-            set_setting(st.session_state.db_path, "ocr_min_words_threshold", str(min_words))
-            st.success("OCR settings saved.")
-
-    with tabs[3]:
-        st.markdown("### Validation against labeled internal dataset")
-        st.write("Upload a CSV with columns: `file_name`, optional `expected_risk_label`, optional `expected_document_type`.")
-        val_file = st.file_uploader("Upload validation CSV", type=["csv"], key="val_csv")
-        if val_file is not None:
-            val_df = pd.read_csv(val_file)
-            st.dataframe(val_df.head(20), use_container_width=True, hide_index=True)
-            if st.button("Run validation"):
-                records = {r["file_name"]: r for r in load_records()}
-                total = matched = risk_ok = doc_ok = 0
-                details = []
-                for _, row in val_df.iterrows():
-                    fname = str(row.get("file_name", "")).strip()
-                    if not fname:
-                        continue
-                    total += 1
-                    rec = records.get(fname)
-                    if not rec:
-                        details.append([fname, row.get("expected_risk_label"), None, row.get("expected_document_type"), None, 0])
-                        continue
-                    matched += 1
-                    risk_match = (
-                        str(row.get("expected_risk_label", "")).strip().lower()
-                        == str(rec.get("risk_label", "")).strip().lower()
-                        if pd.notna(row.get("expected_risk_label")) and str(row.get("expected_risk_label", "")).strip()
-                        else None
-                    )
-                    doc_match = (
-                        str(row.get("expected_document_type", "")).strip().lower()
-                        == str(rec.get("document_type", "")).strip().lower()
-                        if pd.notna(row.get("expected_document_type")) and str(row.get("expected_document_type", "")).strip()
-                        else None
-                    )
-                    if risk_match is True:
-                        risk_ok += 1
-                    if doc_match is True:
-                        doc_ok += 1
-                    details.append([fname, row.get("expected_risk_label"), rec.get("risk_label"),
-                                     row.get("expected_document_type"), rec.get("document_type"),
-                                     1 if ((risk_match is True) or (doc_match is True)) else 0])
-                risk_acc = (risk_ok / max(sum(1 for x in val_df.get("expected_risk_label", []) if pd.notna(x) and str(x).strip()), 1)) * 100 if "expected_risk_label" in val_df.columns else 0
-                doc_acc = (doc_ok / max(sum(1 for x in val_df.get("expected_document_type", []) if pd.notna(x) and str(x).strip()), 1)) * 100 if "expected_document_type" in val_df.columns else 0
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Rows", total)
-                c2.metric("Matched", matched)
-                c3.metric("Risk accuracy", f"{risk_acc:.1f}%")
-                c4.metric("Doc type accuracy", f"{doc_acc:.1f}%")
-                st.dataframe(
-                    pd.DataFrame(details, columns=["file_name", "expected_risk_label", "predicted_risk_label",
-                                                   "expected_document_type", "predicted_document_type", "matched"]),
-                    use_container_width=True, hide_index=True,
-                )
-
-    with tabs[4]:
         st.markdown("### AI / RAG Settings")
 
         if not _RAG_IMPORTS_OK:
@@ -1227,7 +1230,7 @@ def render_operations() -> None:
             "4. Refresh this page — the status dot in the sidebar will turn green."
         )
 
-    with tabs[5]:
+    with tabs[3]:
         st.markdown("### Setup Health Check")
         st.write("Verify all components are working correctly before ingesting documents on a new device.")
 
