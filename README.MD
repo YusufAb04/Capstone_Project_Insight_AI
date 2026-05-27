@@ -26,32 +26,18 @@ Company-pilot version of INSIGHT.AI with:
   - `src/summarizer.py`
   - `src/text_cleaner.py`
 
-## Install
-
-```bash
-pip install streamlit pandas PyPDF2 python-docx
-```
-
-Optional for OCR fallback on scanned PDFs:
-
-```bash
-pip install pytesseract pdf2image pillow
-```
-
-You also need:
-- Tesseract OCR installed on the machine
-- Poppler installed for `pdf2image`
-
-If OCR dependencies are missing, normal PDF text extraction still works.
 
 ## Run
 
 ```bash
-streamlit run app.py
+setup_all.bat
+```
+
+```bash
+run.bat
 ```
 
 ## Notes
 
-- Set the SQLite database path in the sidebar.
 - Use **Scan Folder and Process Changed Files** for large datasets.
 - Re-running the same scan skips unchanged files automatically.
