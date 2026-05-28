@@ -8,16 +8,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
-from src.rag.vector_store import similarity_search
+from src.rag.vector_store import hybrid_search
 
 _RAG_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
         "You are a document analyst for an organisation's internal document library. "
-        "Answer the user's question using ONLY the context provided below. "
-        "If the context does not contain enough information to answer, say: "
-        "'The indexed documents do not contain enough information to answer this question.' "
-        "Always cite the source document file name when referencing specific information.\n\n"
+        "Answer the user's question using ONLY the information in the context provided below. "
+        "If the context contains relevant information, answer directly — do NOT open with any disclaimer or caveat. "
+        "ONLY use the phrase 'The indexed documents do not contain enough information to answer this question.' "
+        "if the context contains absolutely no relevant information about the topic. "
+        "If the context is partially relevant, answer what you can and note what is missing. "
+        "Always cite the source document name and section when referencing specific information.\n\n"
         "Context:\n{context}",
     ),
     ("human", "{question}"),
@@ -71,7 +73,7 @@ def ask_with_rag(
     question: str,
     llm: ChatOllama,
     persist_dir: str = "data/chromadb",
-    top_k: int = 8,
+    top_k: int = 15,
     chat_history: list[dict] | None = None,
 ) -> dict:
     """Run a RAG query and return the answer with source references.
@@ -83,7 +85,7 @@ def ask_with_rag(
         chunks       — raw chunk dicts (for UI display)
         error_type   — None | "no_chunks" | "low_similarity" | "ollama_timeout"
     """
-    chunks = similarity_search(question, top_k=top_k, persist_dir=persist_dir)
+    chunks = hybrid_search(question, top_k=top_k, persist_dir=persist_dir)
 
     if not chunks:
         return {
@@ -94,8 +96,10 @@ def ask_with_rag(
             "error_type": "no_chunks",
         }
 
-    # Reject results where every chunk is too far from the query.
-    if all(c.get("distance", 0.0) > _LOW_SIMILARITY_THRESHOLD for c in chunks):
+    # Reject results where every chunk with a real vector distance is too far.
+    # BM25-only chunks (distance=None) count as a signal that something keyword-relevant exists.
+    vector_chunks = [c for c in chunks if c.get("distance") is not None]
+    if vector_chunks and all(c["distance"] > _LOW_SIMILARITY_THRESHOLD for c in vector_chunks) and not any(c.get("distance") is None for c in chunks):
         return {
             "answer": "Found content but nothing closely matched your question.",
             "sources": [],
@@ -145,7 +149,17 @@ def ask_with_rag(
             }
         raise
 
-    sources = list({c["metadata"].get("file_name", "unknown") for c in chunks})
+    # Only cite a source if at least one of its chunks had a strong vector match.
+    # This prevents BM25-only keyword matches from irrelevant documents appearing as sources.
+    _SOURCE_DISTANCE_THRESHOLD = 0.9
+    sources = list({
+        c["metadata"].get("file_name", "unknown")
+        for c in chunks
+        if c.get("distance") is not None and c["distance"] < _SOURCE_DISTANCE_THRESHOLD
+    })
+    # Fall back to all sources if the filter removes everything (e.g. all BM25-only results)
+    if not sources:
+        sources = list({c["metadata"].get("file_name", "unknown") for c in chunks})
 
     return {
         "answer": answer,

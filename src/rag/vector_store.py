@@ -6,11 +6,18 @@ import src.rag  # noqa: F401
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+
+try:
+    from rank_bm25 import BM25Okapi
+    _BM25_AVAILABLE = True
+except ImportError:
+    _BM25_AVAILABLE = False
 
 _COLLECTION_NAME = "insight_documents"
 _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
@@ -195,6 +202,133 @@ def reset_collection(persist_dir: str = "data/chromadb") -> None:
     os.makedirs(persist_dir, exist_ok=True)
 
     get_collection(persist_dir)
+
+
+# ── BM25 index cache ────────────────────────────────────────────────────────
+# Rebuilt automatically when the collection size changes (new docs indexed).
+_bm25_index: "BM25Okapi | None" = None
+_bm25_chunks: list[dict] = []
+_bm25_collection_count: int = -1
+
+
+def _tokenize(text: str) -> list[str]:
+    """Lowercase word tokenizer for BM25."""
+    return re.findall(r'\w+', text.lower())
+
+
+def _build_bm25_index(persist_dir: str) -> None:
+    """Load all chunks from ChromaDB and build a fresh BM25Okapi index."""
+    global _bm25_index, _bm25_chunks, _bm25_collection_count
+
+    collection = get_collection(persist_dir)
+    total = collection.count()
+    if total == 0:
+        _bm25_index = None
+        _bm25_chunks = []
+        _bm25_collection_count = 0
+        return
+
+    # Fetch all chunks in one call (fine for <100k chunks)
+    results = collection.get(
+        limit=total,
+        include=["documents", "metadatas"],
+    )
+    _bm25_chunks = [
+        {
+            "id":       results["ids"][i],
+            "text":     results["documents"][i],
+            "metadata": results["metadatas"][i],
+            "distance": None,  # no vector distance — BM25 keyword match only
+        }
+        for i in range(len(results["ids"]))
+    ]
+    corpus_tokens = [_tokenize(c["text"]) for c in _bm25_chunks]
+    _bm25_index = BM25Okapi(corpus_tokens)
+    _bm25_collection_count = total
+
+
+def _get_bm25_index(persist_dir: str):
+    """Return (index, chunks), rebuilding if the collection has changed."""
+    global _bm25_collection_count
+
+    if not _BM25_AVAILABLE:
+        return None, []
+
+    collection = get_collection(persist_dir)
+    current_count = collection.count()
+    if _bm25_index is None or current_count != _bm25_collection_count:
+        _build_bm25_index(persist_dir)
+    return _bm25_index, _bm25_chunks
+
+
+def bm25_search(query: str, top_k: int = 15, persist_dir: str = "data/chromadb") -> list[dict]:
+    """Return top-k chunks ranked by BM25 keyword score."""
+    index, chunks = _get_bm25_index(persist_dir)
+    if index is None or not chunks:
+        return []
+
+    tokens = _tokenize(query)
+    scores = index.get_scores(tokens)
+
+    ranked = sorted(
+        range(len(chunks)),
+        key=lambda i: scores[i],
+        reverse=True,
+    )[:top_k]
+
+    results = []
+    for rank_pos, idx in enumerate(ranked):
+        chunk = dict(chunks[idx])
+        chunk["bm25_score"] = float(scores[idx])
+        results.append(chunk)
+    return results
+
+
+def hybrid_search(
+    query: str,
+    top_k: int = 15,
+    persist_dir: str = "data/chromadb",
+    rrf_k: int = 60,
+) -> list[dict]:
+    """Combine vector similarity and BM25 keyword search via Reciprocal Rank Fusion.
+
+    RRF score = 1/(rrf_k + vector_rank) + 1/(rrf_k + bm25_rank)
+    Higher score = more relevant. Deduplicates by chunk id.
+    Falls back to pure vector search if BM25 is unavailable.
+    """
+    vector_results = similarity_search(query, top_k=top_k, persist_dir=persist_dir)
+
+    if not _BM25_AVAILABLE:
+        return vector_results
+
+    bm25_results = bm25_search(query, top_k=top_k, persist_dir=persist_dir)
+
+    # Build rank maps: chunk_id -> 0-based rank
+    vector_ranks = {c["id"]: i for i, c in enumerate(vector_results)}
+    bm25_ranks   = {c["id"]: i for i, c in enumerate(bm25_results)}
+
+    # Collect all unique chunk ids from both result sets
+    all_ids = dict.fromkeys(
+        [c["id"] for c in vector_results] + [c["id"] for c in bm25_results]
+    )
+
+    # Build an id→chunk lookup (prefer vector chunk for distance metadata)
+    chunk_by_id: dict[str, dict] = {}
+    for c in bm25_results:
+        chunk_by_id[c["id"]] = c
+    for c in vector_results:
+        chunk_by_id[c["id"]] = c  # vector version overwrites (has distance)
+
+    # Score and sort
+    scored = []
+    for chunk_id in all_ids:
+        v_rank = vector_ranks.get(chunk_id, top_k)   # unseen = worst rank
+        b_rank = bm25_ranks.get(chunk_id, top_k)
+        rrf_score = 1.0 / (rrf_k + v_rank) + 1.0 / (rrf_k + b_rank)
+        scored.append((rrf_score, chunk_by_id[chunk_id]))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [chunk for _, chunk in scored[:top_k]]
 
 
 def purge_orphaned_chunks(db_path: str, persist_dir: str = "data/chromadb") -> int:
