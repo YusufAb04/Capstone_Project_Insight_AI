@@ -194,6 +194,7 @@ def inject_css() -> None:
             margin-bottom: 6px;
             text-transform: uppercase;
         }
+        small[data-testid="InputInstructions"] { display: none !important; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -213,6 +214,7 @@ def init_state() -> None:
     st.session_state.setdefault("ollama_ok", None)     # None=unchecked, True/False
     st.session_state.setdefault("rag_llm", None)       # cached ChatOllama instance
     st.session_state.setdefault("pending_delete", None)
+    st.session_state.setdefault("pending_dup_delete", None)
     st.session_state.setdefault("_chroma_purged", False)
 
 
@@ -895,7 +897,57 @@ def render_file_explorer() -> None:
             for group in dups:
                 with st.expander(f"Hash: {group['file_hash'][:16]}…  ({group['count']} copies)"):
                     for path, name in zip(group["file_paths"], group["file_names"]):
-                        st.markdown(f"- **{name}** — `{path}`")
+                        col_name, col_btn = st.columns([9, 1])
+                        col_name.markdown(f"**{name}** — `{path}`")
+                        if col_btn.button("🗑️", key=f"dup_trash_{path}", help=f"Remove duplicate: {name}"):
+                            st.session_state.pending_dup_delete = {"file_path": path, "file_name": name}
+
+        # ── Duplicate deletion confirmation panel ────────────────────────────
+        pending_dup = st.session_state.get("pending_dup_delete")
+        if pending_dup:
+            dup_fp = pending_dup["file_path"]
+            dup_name = pending_dup["file_name"]
+            is_local = dup_fp and not dup_fp.startswith("uploaded://")
+            st.divider()
+            with st.container(border=True):
+                st.warning(f"🗑️ Remove duplicate **{dup_name}** from the index?")
+                del_disk_dup = False
+                if is_local:
+                    del_disk_dup = st.checkbox(
+                        "Also delete the file from disk (permanent — cannot be undone)",
+                        key="del_dup_disk_chk",
+                    )
+                btn_col1, btn_col2, _ = st.columns([1, 1, 5])
+                if btn_col1.button("Confirm", type="primary", key="del_dup_confirm_btn"):
+                    try:
+                        conn = get_connection(st.session_state.db_path)
+                        conn.cursor().execute("DELETE FROM files WHERE file_path = ?", (dup_fp,))
+                        conn.commit()
+                        conn.close()
+                    except Exception as exc:
+                        st.error(f"Database error: {exc}")
+                        st.stop()
+                    if _CHROMA_AVAILABLE and _RAG_IMPORTS_OK:
+                        try:
+                            delete_by_file_path(dup_fp, persist_dir=_chroma_dir())
+                        except Exception as chroma_exc:
+                            st.warning(f"Removed from index, but ChromaDB cleanup failed: {chroma_exc}")
+                    if del_disk_dup and is_local:
+                        try:
+                            Path(dup_fp).unlink(missing_ok=True)
+                        except Exception as exc:
+                            st.warning(f"Removed from index but could not delete file from disk: {exc}")
+                    log_audit(
+                        "delete_duplicate",
+                        dup_name,
+                        f"Duplicate removed from index{' and disk' if del_disk_dup else ''}",
+                    )
+                    st.session_state.pending_dup_delete = None
+                    st.success(f"Duplicate **{dup_name}** has been removed from the index.")
+                    st.rerun()
+                if btn_col2.button("Cancel", key="del_dup_cancel_btn"):
+                    st.session_state.pending_dup_delete = None
+                    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -1150,11 +1202,55 @@ def render_operations() -> None:
         new_model = st.text_input("Ollama model", value=_ollama_model(), placeholder="llama3.2:3b")
         new_chroma = st.text_input("ChromaDB directory", value=_chroma_dir(), placeholder="data/chromadb")
         if st.button("Save RAG settings"):
-            set_setting(st.session_state.db_path, "ollama_model", new_model.strip())
+            saved_model = new_model.strip()
+            set_setting(st.session_state.db_path, "ollama_model", saved_model)
             set_setting(st.session_state.db_path, "chroma_persist_dir", new_chroma.strip())
-            st.session_state.rag_llm = None   # force LLM re-init
+            st.session_state.rag_llm = None
             st.session_state.ollama_ok = None
             st.success("RAG settings saved.")
+
+            if saved_model and saved_model not in (health.get("ollama_available_models") or []):
+                import requests as _req
+                import json as _json
+                status_box = st.empty()
+                status_box.info(f"Downloading model '{saved_model}'… this may take several minutes.")
+                try:
+                    with _req.post(
+                        "http://localhost:11434/api/pull",
+                        json={"name": saved_model},
+                        stream=True,
+                        timeout=900,
+                    ) as resp:
+                        if resp.status_code != 200:
+                            status_box.error(f"Ollama returned {resp.status_code}. Is Ollama running?")
+                        else:
+                            last_status = ""
+                            for raw in resp.iter_lines():
+                                if not raw:
+                                    continue
+                                try:
+                                    data = _json.loads(raw)
+                                except Exception:
+                                    continue
+                                if data.get("error"):
+                                    status_box.error(f"Pull failed: {data['error']}")
+                                    break
+                                status_text = data.get("status", "")
+                                completed = data.get("completed")
+                                total = data.get("total")
+                                if completed and total:
+                                    pct = int(completed / total * 100)
+                                    last_status = f"Downloading '{saved_model}': {pct}%"
+                                elif status_text and status_text != last_status:
+                                    last_status = status_text
+                                if last_status:
+                                    status_box.info(last_status)
+                            else:
+                                status_box.success(f"Model '{saved_model}' downloaded successfully.")
+                except _req.exceptions.ConnectionError:
+                    status_box.error("Cannot reach Ollama at localhost:11434. Make sure Ollama is running.")
+                except _req.exceptions.Timeout:
+                    status_box.warning(f"Download timed out. Run `ollama pull {saved_model}` manually in a terminal.")
 
         st.divider()
         st.markdown("### Index verification")
