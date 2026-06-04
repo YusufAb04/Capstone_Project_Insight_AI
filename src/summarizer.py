@@ -58,11 +58,11 @@ def is_bad_sentence(sentence: str) -> bool:
     if re.search(r"\bpage\s+\d+\b", lowered):
         return True
 
-    # Dòng giống bảng risk matrix
+    # line resembles a risk matrix table row
     if "moderate-to-high" in lowered and "low-to-moderate" in lowered:
         return True
 
-    # Quá nhiều dấu gạch nối kiểu bảng
+    # too many hyphens typical of table formatting
     if sentence.count("-") >= 4:
         return True
 
@@ -84,11 +84,11 @@ def score_sentence(sentence: str, word_freq: Counter) -> float:
     important_hits = sum(1 for term in IMPORTANT_TERMS if term in lowered)
     score += important_hits * 4
 
-    # ưu tiên câu độ dài vừa phải
+    # prefer sentences of moderate length
     if 12 <= len(words) <= 30:
         score += 3
 
-    # ưu tiên câu chứa ý nghĩa hành động / đánh giá
+    # prefer sentences containing action or evaluation meaning
     action_patterns = [
         "includes",
         "identifies",
@@ -124,7 +124,7 @@ def summarize_text(text: str, max_sentences: int = 3) -> str:
 
     selected = [s for s, _ in scored[:max_sentences]]
 
-    # giữ thứ tự gốc
+    # preserve original sentence order
     ordered_selected = [s for s in sentences if s in selected]
 
     if not ordered_selected:
