@@ -151,7 +151,7 @@ def merge_broken_lines(lines: list[str]) -> list[str]:
             buffer = line
             continue
 
-        # Nếu dòng trước chưa kết câu thì nối tiếp
+        # if the previous buffer hasn't ended the sentence, continue joining
         if not re.search(r"[.!?:]$", buffer):
             if len(line.split()) <= 3:
                 buffer += " " + line
@@ -184,11 +184,11 @@ def clean_extracted_text(text: str) -> str:
         if is_noisy_line(stripped):
             continue
 
-        # bỏ dòng chỉ có 1-2 từ vô nghĩa
+        # skip lines with only 1-2 words (likely noise)
         if len(stripped.split()) <= 2:
             continue
 
-        # bỏ dòng bị nhiễu ký tự
+        # skip lines with repeated noise characters
         if re.search(r"[•◆■]{2,}", stripped):
             continue
 

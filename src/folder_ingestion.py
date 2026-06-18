@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import List, Dict
 
-SUPPORTED_EXTENSIONS = {".txt", ".csv", ".pdf", ".docx"}
+SUPPORTED_EXTENSIONS = {".txt", ".csv", ".pdf", ".docx", ".xlsx"}
 
 
 def compute_file_hash(file_path: str, block_size: int = 1024 * 1024) -> str:

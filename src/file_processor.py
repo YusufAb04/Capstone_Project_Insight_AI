@@ -8,6 +8,12 @@ import pandas as pd
 from PyPDF2 import PdfReader
 from docx import Document
 
+try:
+    import pdfplumber as _pdfplumber
+    _PDFPLUMBER = True
+except ImportError:
+    _PDFPLUMBER = False
+
 from src.classifier import classify_document
 from src.summarizer import summarize_text
 from src.keyword_extractor import extract_keywords
@@ -25,7 +31,7 @@ except Exception:
     convert_from_bytes = None
 
 
-SUPPORTED_EXTENSIONS = {"txt", "csv", "pdf", "docx"}
+SUPPORTED_EXTENSIONS = {"txt", "csv", "pdf", "docx", "xlsx"}
 
 
 class OCRUnavailableError(RuntimeError):
@@ -49,6 +55,15 @@ def extract_text_from_txt_bytes(data: bytes) -> str:
     return safe_decode(data)
 
 
+def _numeric_summary(df: pd.DataFrame) -> str:
+    """One-line totals for every numeric column; empty string if none."""
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    if not numeric_cols:
+        return ""
+    parts = [f"Total {col}: {df[col].sum()}" for col in numeric_cols]
+    return "Column totals: " + " | ".join(parts)
+
+
 def extract_text_from_csv_bytes(data: bytes) -> str:
     raw_text = safe_decode(data)
     if not raw_text:
@@ -68,7 +83,33 @@ def extract_text_from_csv_bytes(data: bytes) -> str:
     for _, row in df.fillna("").iterrows():
         row_text = " | ".join(f"{col}: {row[col]}" for col in df.columns)
         lines.append(row_text)
-    return "\n".join(lines).strip()
+    body = "\n".join(lines).strip()
+    summary = _numeric_summary(df)
+    return f"{summary}\n\n{body}" if summary else body
+
+
+def extract_text_from_xlsx_bytes(data: bytes) -> str:
+    try:
+        sheets = pd.read_excel(BytesIO(data), sheet_name=None, dtype=str)
+        sheets_numeric = pd.read_excel(BytesIO(data), sheet_name=None)
+    except Exception as exc:
+        return f"Excel file could not be read: {exc}"
+    if not sheets:
+        return "Excel file is empty."
+    parts = []
+    for sheet_name, df in sheets.items():
+        df = df.fillna("")
+        if df.empty:
+            continue
+        lines = [f"Sheet: {sheet_name}"]
+        summary = _numeric_summary(sheets_numeric.get(sheet_name, pd.DataFrame()).fillna(0))
+        if summary:
+            lines.append(summary)
+        for _, row in df.iterrows():
+            row_text = " | ".join(f"{col}: {row[col]}" for col in df.columns)
+            lines.append(row_text)
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts).strip() or "Excel file is empty."
 
 
 def ocr_status() -> dict:
@@ -92,6 +133,48 @@ def ocr_pdf_bytes(data: bytes, *, dpi: int = 220, page_limit: int = 30) -> Tuple
     return merged, bool(merged)
 
 
+def _extract_pdf_tables_pdfplumber(data: bytes) -> str:
+    """Extract text + tables from a PDF using pdfplumber. Tables are formatted as pipe-separated rows."""
+    page_outputs = []
+    with _pdfplumber.open(BytesIO(data)) as pdf:
+        for page in pdf.pages:
+            parts = []
+
+            # Extract tables as structured rows first
+            tables = page.find_tables()
+            table_bboxes = [t.bbox for t in tables]
+            for t in tables:
+                rows = []
+                for row in t.extract():
+                    cells = [str(c).strip() if c is not None else "" for c in row]
+                    if any(cells):
+                        rows.append(" | ".join(cells))
+                if rows:
+                    parts.append("[Table]\n" + "\n".join(rows))
+
+            # Extract plain text outside table bounding boxes
+            if table_bboxes:
+                def _outside_tables(obj):
+                    x0, top = obj.get("x0", 0), obj.get("top", 0)
+                    x1, bottom = obj.get("x1", x0), obj.get("bottom", top)
+                    for bx0, btop, bx1, bbottom in table_bboxes:
+                        if x0 < bx1 and x1 > bx0 and top < bbottom and bottom > btop:
+                            return False
+                    return True
+                cropped = page.filter(_outside_tables)
+                plain = cropped.extract_text() or ""
+            else:
+                plain = page.extract_text() or ""
+
+            if plain.strip():
+                parts.append(plain.strip())
+
+            if parts:
+                page_outputs.append("\n\n".join(parts))
+
+    return "\n\n".join(page_outputs).strip()
+
+
 def extract_text_from_pdf_bytes(
     data: bytes,
     *,
@@ -100,6 +183,16 @@ def extract_text_from_pdf_bytes(
     ocr_dpi: int = 220,
     min_words_threshold: int = 30,
 ) -> Tuple[str, bool]:
+    # Try pdfplumber first — it preserves table structure
+    if _PDFPLUMBER:
+        try:
+            merged = _extract_pdf_tables_pdfplumber(data)
+            if len(merged.split()) >= max(1, min_words_threshold):
+                return merged, False
+        except Exception:
+            pass
+
+    # Fallback: PyPDF2 plain text extraction
     reader = PdfReader(BytesIO(data))
     pages_text = []
     for page in reader.pages:
@@ -216,7 +309,14 @@ def apply_mode_processing(analysis_text: str, mode: str) -> dict:
     }
 
 
-def process_file_bytes(filename: str, data: bytes, mode: str = "Premium", ocr_config: Optional[dict] = None) -> Dict[str, Any]:
+def process_file_bytes(
+    filename: str,
+    data: bytes,
+    mode: str = "Premium",
+    ocr_config: Optional[dict] = None,
+    file_path: Optional[str] = None,
+    llm=None,
+) -> Dict[str, Any]:
     extension = get_file_extension(filename)
     if extension not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: .{extension}")
@@ -237,6 +337,8 @@ def process_file_bytes(filename: str, data: bytes, mode: str = "Premium", ocr_co
         )
     elif extension == "docx":
         raw_content = extract_text_from_docx_bytes(data)
+    elif extension == "xlsx":
+        raw_content = extract_text_from_xlsx_bytes(data)
     else:
         raise ValueError(f"Unsupported file type: .{extension}")
 
@@ -249,8 +351,20 @@ def process_file_bytes(filename: str, data: bytes, mode: str = "Premium", ocr_co
 
     mode_result = apply_mode_processing(analysis_text, mode)
 
+    _llm_enriched = 0
+    if llm is not None:
+        from src.llm_enricher import enrich_with_llm
+        enriched = enrich_with_llm(analysis_text, mode_result["risk_label"], llm)
+        if enriched:
+            mode_result["summary"] = enriched["summary"]
+            mode_result["document_type"] = enriched["document_type"]
+            mode_result["risk_explanation"] = enriched["risk_explanation"]
+            mode_result["management_takeaway"] = enriched["management_takeaway"]
+            _llm_enriched = 1
+
     return {
         "filename": filename,
+        "file_path": file_path or f"uploaded://{filename}",
         "filetype": extension.upper(),
         "mode": mode_result["mode"],
         "content": analysis_text,
@@ -268,18 +382,26 @@ def process_file_bytes(filename: str, data: bytes, mode: str = "Premium", ocr_co
         "management_takeaway": mode_result["management_takeaway"],
         "risk_explanation": mode_result["risk_explanation"],
         "ocr_used": ocr_used,
+        "llm_enriched": _llm_enriched,
     }
 
 
-def process_file_path(file_path: str, mode: str = "Premium", ocr_config: Optional[dict] = None) -> Dict[str, Any]:
+def process_file_path(file_path: str, mode: str = "Premium", ocr_config: Optional[dict] = None, llm=None) -> Dict[str, Any]:
     path = Path(file_path)
     data = path.read_bytes()
-    return process_file_bytes(path.name, data, mode=mode, ocr_config=ocr_config)
+    return process_file_bytes(path.name, data, mode=mode, ocr_config=ocr_config, file_path=file_path, llm=llm)
 
 
-def process_uploaded_file(uploaded_file, mode: str = "Premium", ocr_config: Optional[dict] = None) -> Dict[str, Any]:
-    return process_file_bytes(uploaded_file.name, uploaded_file.getvalue(), mode=mode, ocr_config=ocr_config)
+def process_uploaded_file(uploaded_file, mode: str = "Premium", ocr_config: Optional[dict] = None, llm=None) -> Dict[str, Any]:
+    return process_file_bytes(
+        uploaded_file.name,
+        uploaded_file.getvalue(),
+        mode=mode,
+        ocr_config=ocr_config,
+        file_path=f"uploaded://{uploaded_file.name}",
+        llm=llm,
+    )
 
 
-def process_multiple_files(uploaded_files, mode: str = "Premium", ocr_config: Optional[dict] = None) -> List[Dict[str, Any]]:
-    return [process_uploaded_file(uploaded_file, mode=mode, ocr_config=ocr_config) for uploaded_file in uploaded_files]
+def process_multiple_files(uploaded_files, mode: str = "Premium", ocr_config: Optional[dict] = None, llm=None) -> List[Dict[str, Any]]:
+    return [process_uploaded_file(f, mode=mode, ocr_config=ocr_config, llm=llm) for f in uploaded_files]

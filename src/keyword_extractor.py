@@ -65,17 +65,17 @@ def extract_keywords(text: str, top_n: int = 10) -> list[str]:
 
     counts = Counter(filtered)
 
-    # tăng điểm cho từ có giá trị business/risk
+    # boost score for words with business/risk value
     for word in list(counts.keys()):
         if word in BUSINESS_PRIORITY:
             counts[word] += 4
         if word in LOW_VALUE_TERMS:
             counts[word] -= 2
 
-    # bỏ các từ điểm <= 0
+    # remove words with score <= 0
     cleaned_counts = {word: count for word, count in counts.items() if count > 0}
 
-    # ưu tiên unique meaningful keywords
+    # rank by frequency, prioritizing unique meaningful keywords
     ranked = sorted(cleaned_counts.items(), key=lambda x: x[1], reverse=True)
 
     keywords = []

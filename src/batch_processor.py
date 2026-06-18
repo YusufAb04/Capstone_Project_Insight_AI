@@ -1,18 +1,46 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from src.database import init_database, get_connection, get_setting
+from src.database import init_database, get_connection, get_setting, get_exclusion_keywords
 from src.folder_ingestion import scan_folder, compute_file_hash
 from src.file_processor import process_file_path, process_uploaded_file
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
 
+# RAG stack is optional — app runs without it if packages aren't installed
+try:
+    from src.rag.chunker import chunk_text
+    from src.rag.vector_store import upsert_document, delete_by_file_path, get_collection
+    _CHROMA_AVAILABLE = True
+except ImportError:
+    _CHROMA_AVAILABLE = False
+
+# LLM enrichment (requires RAG stack)
+try:
+    from src.rag.llm_interface import check_ollama_status as _check_ollama_status
+    from src.rag.llm_interface import get_llm as _llm_factory
+    from src.llm_enricher import enrich_with_llm
+    _ENRICHMENT_AVAILABLE = True
+except ImportError:
+    _ENRICHMENT_AVAILABLE = False
+
 
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _check_exclusion(filename: str, keywords: list[str]) -> Optional[str]:
+    """Return the matched exclusion keyword if filename contains it (case-insensitive), else None."""
+    lower = filename.lower()
+    for kw in keywords:
+        if kw.strip() and kw.strip().lower() in lower:
+            return kw.strip()
+    return None
 
 
 def load_ocr_config(db_path: str) -> dict:
@@ -22,6 +50,24 @@ def load_ocr_config(db_path: str) -> dict:
         "ocr_dpi": int(get_setting(db_path, "ocr_dpi", "220") or 220),
         "ocr_min_words_threshold": int(get_setting(db_path, "ocr_min_words_threshold", "30") or 30),
     }
+
+
+def _load_chroma_dir(db_path: str) -> str:
+    return get_setting(db_path, "chroma_persist_dir", "data/chromadb") or "data/chromadb"
+
+
+def _get_ingestion_llm(db_path: str):
+    """Return a ChatOllama instance if Ollama is reachable, else None."""
+    if not _ENRICHMENT_AVAILABLE:
+        return None
+    base_url = get_setting(db_path, "ollama_base_url", "http://localhost:11434") or "http://localhost:11434"
+    model = get_setting(db_path, "ollama_model", "llama3.2:3b") or "llama3.2:3b"
+    if not _check_ollama_status(base_url):
+        return None
+    try:
+        return _llm_factory(model_name=model, base_url=base_url)
+    except Exception:
+        return None
 
 
 def create_run(conn, source_type: str, source_value: str, total_files: int) -> int:
@@ -63,7 +109,21 @@ def log_error(conn, file_path: str, error_type: str, error_message: str) -> None
     conn.commit()
 
 
-def upsert_file_record(conn, *, file_path: str, file_name: str, extension: str, file_size: int, modified_time: float, file_hash: str, status: str, ocr_used: bool) -> int:
+def upsert_file_record(
+    conn,
+    *,
+    file_path: str,
+    file_name: str,
+    extension: str,
+    file_size: int,
+    modified_time: float,
+    file_hash: str,
+    status: str,
+    ocr_used: bool,
+    chroma_synced: int = 0,
+    chunk_count: int = 0,
+    llm_enriched: int = 0,
+) -> int:
     cur = conn.cursor()
     cur.execute("SELECT id FROM files WHERE file_path = ?", (file_path,))
     row = cur.fetchone()
@@ -73,19 +133,23 @@ def upsert_file_record(conn, *, file_path: str, file_name: str, extension: str, 
             """
             UPDATE files
             SET file_name = ?, extension = ?, file_size = ?, modified_time = ?, file_hash = ?,
-                status = ?, ocr_used = ?, last_processed_at = ?
+                status = ?, ocr_used = ?, last_processed_at = ?, chroma_synced = ?, chunk_count = ?,
+                llm_enriched = ?
             WHERE id = ?
             """,
-            (file_name, extension, file_size, modified_time, file_hash, status, int(bool(ocr_used)), now_str(), file_id),
+            (file_name, extension, file_size, modified_time, file_hash, status,
+             int(bool(ocr_used)), now_str(), chroma_synced, chunk_count, llm_enriched, file_id),
         )
     else:
         cur.execute(
             """
             INSERT INTO files
-            (file_path, file_name, extension, file_size, modified_time, file_hash, status, ocr_used, last_processed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (file_path, file_name, extension, file_size, modified_time, file_hash,
+             status, ocr_used, last_processed_at, chroma_synced, chunk_count, llm_enriched)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (file_path, file_name, extension, file_size, modified_time, file_hash, status, int(bool(ocr_used)), now_str()),
+            (file_path, file_name, extension, file_size, modified_time, file_hash,
+             status, int(bool(ocr_used)), now_str(), chroma_synced, chunk_count, llm_enriched),
         )
         file_id = cur.lastrowid
     conn.commit()
@@ -133,6 +197,23 @@ def replace_analysis_result(conn, file_id: int, result: dict) -> None:
     conn.commit()
 
 
+def _sync_to_chroma(result: dict, file_path: str, chroma_dir: str) -> int:
+    """Embed the document into ChromaDB. Returns chunk count (0 on failure)."""
+    if not _CHROMA_AVAILABLE:
+        return 0
+    content = result.get("content", "")
+    if not content or not content.strip():
+        return 0
+    try:
+        file_name = result.get("filename") or result.get("file_name") or file_path.split("/")[-1]
+        chunks = chunk_text(content, file_path=file_path, file_name=file_name)
+        delete_by_file_path(file_path, persist_dir=chroma_dir)
+        upsert_document(chunks, persist_dir=chroma_dir)
+        return len(chunks)
+    except Exception:
+        return 0
+
+
 def should_skip(conn, file_path: str, modified_time: float, file_hash: str) -> bool:
     cur = conn.cursor()
     cur.execute("SELECT modified_time, file_hash, status FROM files WHERE file_path = ?", (file_path,))
@@ -143,17 +224,35 @@ def should_skip(conn, file_path: str, modified_time: float, file_hash: str) -> b
     return (old_modified == modified_time) and (old_hash == file_hash) and (old_status == "processed")
 
 
-def process_folder_to_db(folder_path: str, db_path: str, mode: str = "Premium", recursive: bool = True, progress_callback: ProgressCallback = None) -> int:
+def process_folder_to_db(
+    folder_path: str,
+    db_path: str,
+    mode: str = "Premium",
+    recursive: bool = True,
+    progress_callback: ProgressCallback = None,
+) -> tuple[int, list[tuple[str, str]]]:
     init_database(db_path)
     conn = get_connection(db_path)
     discovered = scan_folder(folder_path, recursive=recursive)
     run_id = create_run(conn, "folder", folder_path, len(discovered))
     ocr_config = load_ocr_config(db_path)
+    llm = _get_ingestion_llm(db_path)
+    chroma_dir = _load_chroma_dir(db_path)
+    exclusion_keywords = get_exclusion_keywords(db_path)
 
     processed = skipped = failed = 0
+    excluded: list[tuple[str, str]] = []
 
     for idx, meta in enumerate(discovered, start=1):
         file_path = meta["file_path"]
+
+        matched_kw = _check_exclusion(meta["file_name"], exclusion_keywords)
+        if matched_kw:
+            excluded.append((meta["file_name"], matched_kw))
+            if progress_callback:
+                progress_callback(idx, len(discovered), f"Excluded: {meta['file_name']} (keyword: {matched_kw})")
+            continue
+
         try:
             file_hash = compute_file_hash(file_path)
             if should_skip(conn, file_path, meta["modified_time"], file_hash):
@@ -162,7 +261,10 @@ def process_folder_to_db(folder_path: str, db_path: str, mode: str = "Premium", 
                     progress_callback(idx, len(discovered), f"Skipped unchanged: {meta['file_name']}")
                 continue
 
-            result = process_file_path(file_path, mode=mode, ocr_config=ocr_config)
+            result = process_file_path(file_path, mode=mode, ocr_config=ocr_config, llm=llm)
+            chunk_count = _sync_to_chroma(result, file_path, chroma_dir)
+            chroma_synced = 1 if chunk_count > 0 else 0
+
             file_id = upsert_file_record(
                 conn,
                 file_path=file_path,
@@ -173,6 +275,9 @@ def process_folder_to_db(folder_path: str, db_path: str, mode: str = "Premium", 
                 file_hash=file_hash,
                 status="processed",
                 ocr_used=result.get("ocr_used", False),
+                chroma_synced=chroma_synced,
+                chunk_count=chunk_count,
+                llm_enriched=result.get("llm_enriched", 0),
             )
             replace_analysis_result(conn, file_id, result)
             processed += 1
@@ -197,32 +302,57 @@ def process_folder_to_db(folder_path: str, db_path: str, mode: str = "Premium", 
 
     finalize_run(conn, run_id, processed, skipped, failed, status="completed")
     conn.close()
-    return run_id
+    return run_id, excluded
 
 
-def process_uploaded_files_to_db(uploaded_files, db_path: str, mode: str = "Premium", progress_callback: ProgressCallback = None) -> int:
+def process_uploaded_files_to_db(
+    uploaded_files,
+    db_path: str,
+    mode: str = "Premium",
+    progress_callback: ProgressCallback = None,
+) -> tuple[int, list[tuple[str, str]]]:
     init_database(db_path)
     conn = get_connection(db_path)
     total = len(uploaded_files)
     run_id = create_run(conn, "upload", f"{total} uploaded files", total)
     ocr_config = load_ocr_config(db_path)
+    llm = _get_ingestion_llm(db_path)
+    chroma_dir = _load_chroma_dir(db_path)
+    exclusion_keywords = get_exclusion_keywords(db_path)
 
     processed = skipped = failed = 0
+    excluded: list[tuple[str, str]] = []
 
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
         pseudo_path = f"uploaded://{uploaded_file.name}"
+
+        matched_kw = _check_exclusion(uploaded_file.name, exclusion_keywords)
+        if matched_kw:
+            excluded.append((uploaded_file.name, matched_kw))
+            if progress_callback:
+                progress_callback(idx, total, f"Excluded: {uploaded_file.name} (keyword: {matched_kw})")
+            continue
+
         try:
-            result = process_uploaded_file(uploaded_file, mode=mode, ocr_config=ocr_config)
+            result = process_uploaded_file(uploaded_file, mode=mode, ocr_config=ocr_config, llm=llm)
+            file_bytes = uploaded_file.getvalue()
+            file_hash = hashlib.sha256(file_bytes).hexdigest()
+            chunk_count = _sync_to_chroma(result, pseudo_path, chroma_dir)
+            chroma_synced = 1 if chunk_count > 0 else 0
+
             file_id = upsert_file_record(
                 conn,
                 file_path=pseudo_path,
                 file_name=uploaded_file.name,
                 extension=result.get("filetype", ""),
-                file_size=len(uploaded_file.getvalue()),
+                file_size=len(file_bytes),
                 modified_time=0.0,
-                file_hash="uploaded-session",
+                file_hash=file_hash,
                 status="processed",
                 ocr_used=result.get("ocr_used", False),
+                chroma_synced=chroma_synced,
+                chunk_count=chunk_count,
+                llm_enriched=result.get("llm_enriched", 0),
             )
             replace_analysis_result(conn, file_id, result)
             processed += 1
@@ -236,7 +366,7 @@ def process_uploaded_files_to_db(uploaded_files, db_path: str, mode: str = "Prem
 
     finalize_run(conn, run_id, processed, skipped, failed, status="completed")
     conn.close()
-    return run_id
+    return run_id, excluded
 
 
 def get_run_stats(db_path: str, run_id: int):
@@ -245,8 +375,7 @@ def get_run_stats(db_path: str, run_id: int):
     cur.execute(
         """
         SELECT total_files, processed_files, skipped_files, failed_files, status
-        FROM processing_runs
-        WHERE id = ?
+        FROM processing_runs WHERE id = ?
         """,
         (run_id,),
     )
@@ -261,6 +390,128 @@ def get_run_stats(db_path: str, run_id: int):
         "failed_files": row[3],
         "status": row[4],
     }
+
+
+def sync_missing_to_chroma(db_path: str, progress_callback: ProgressCallback = None) -> int:
+    """Embed all processed files that have not yet been synced to ChromaDB.
+
+    Returns the number of files successfully synced.
+    """
+    if not _CHROMA_AVAILABLE:
+        return 0
+
+    chroma_dir = _load_chroma_dir(db_path)
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, file_path, file_name FROM files WHERE chroma_synced = 0 AND status = 'processed'"
+    )
+    pending = cur.fetchall()
+    conn.close()
+
+    synced = 0
+    total = len(pending)
+
+    for idx, row in enumerate(pending, start=1):
+        file_id, file_path, file_name = row[0], row[1], row[2]
+        try:
+            # Load content from analysis_results
+            conn2 = get_connection(db_path)
+            cur2 = conn2.cursor()
+            cur2.execute("SELECT content_text FROM analysis_results WHERE file_id = ?", (file_id,))
+            ar = cur2.fetchone()
+            conn2.close()
+
+            content = ar[0] if ar and ar[0] else ""
+            if not content.strip():
+                continue
+
+            chunks = chunk_text(content, file_path=file_path, file_name=file_name)
+            delete_by_file_path(file_path, persist_dir=chroma_dir)
+            upsert_document(chunks, persist_dir=chroma_dir)
+            chunk_count = len(chunks)
+
+            conn3 = get_connection(db_path)
+            cur3 = conn3.cursor()
+            cur3.execute(
+                "UPDATE files SET chroma_synced = 1, chunk_count = ? WHERE id = ?",
+                (chunk_count, file_id),
+            )
+            conn3.commit()
+            conn3.close()
+
+            synced += 1
+            if progress_callback:
+                progress_callback(idx, total, f"Synced: {file_name}")
+        except Exception:
+            if progress_callback:
+                progress_callback(idx, total, f"Failed to sync: {file_name}")
+
+    return synced
+
+
+def enrich_existing_with_llm(db_path: str, llm, progress_callback: ProgressCallback = None) -> int:
+    """Enrich all processed files that have not yet been LLM-enriched.
+
+    Updates summary, document_type, risk_explanation, management_takeaway in
+    analysis_results and sets files.llm_enriched = 1 on success.
+    Returns count of successfully enriched files.
+    """
+    if not _ENRICHMENT_AVAILABLE:
+        return 0
+
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT f.id, f.file_name, a.content_text, a.risk_label
+        FROM files f
+        JOIN analysis_results a ON a.file_id = f.id
+        WHERE f.llm_enriched = 0 AND f.status = 'processed'
+        """
+    )
+    pending = cur.fetchall()
+    conn.close()
+
+    total = len(pending)
+    enriched_count = 0
+
+    for idx, row in enumerate(pending, start=1):
+        file_id = row[0]
+        file_name = row[1]
+        content_text = row[2]
+        risk_label = row[3]
+        try:
+            if content_text and risk_label:
+                enriched = enrich_with_llm(content_text, risk_label, llm)
+                if enriched:
+                    conn2 = get_connection(db_path)
+                    try:
+                        conn2.execute(
+                            """
+                            UPDATE analysis_results
+                            SET summary = ?, document_type = ?, risk_explanation = ?, management_takeaway = ?
+                            WHERE file_id = ?
+                            """,
+                            (
+                                enriched["summary"],
+                                enriched["document_type"],
+                                enriched["risk_explanation"],
+                                enriched["management_takeaway"],
+                                file_id,
+                            ),
+                        )
+                        conn2.execute("UPDATE files SET llm_enriched = 1 WHERE id = ?", (file_id,))
+                        conn2.commit()
+                        enriched_count += 1
+                    finally:
+                        conn2.close()
+        except Exception:
+            pass
+        if progress_callback:
+            progress_callback(idx, total, file_name)
+
+    return enriched_count
 
 
 def create_schedule(db_path: str, schedule_name: str, folder_path: str, frequency: str, recursive: bool = True, notes: str = "") -> None:
@@ -336,3 +587,89 @@ def run_due_schedules(db_path: str, progress_callback: ProgressCallback = None) 
         conn.close()
         ran += 1
     return ran
+
+
+# ---------------------------------------------------------------------------
+# Chunk verification and single-file re-ingestion
+# ---------------------------------------------------------------------------
+
+def _extract_text_for_reingest(file_path: str) -> str:
+    """Return cleaned text from file_path for re-ingestion, or empty string on failure."""
+    try:
+        result = process_file_path(file_path)
+        return result.get("content", "") or ""
+    except Exception:
+        return ""
+
+
+def verify_chunk_counts(db_path: str, chroma_dir: str) -> list[dict]:
+    """Compare SQLite chunk_count records against ChromaDB; reset broken entries."""
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT file_path, chunk_count FROM files WHERE chroma_synced = 1"
+    )
+    rows = cur.fetchall()
+
+    collection = get_collection(chroma_dir)
+    results: list[dict] = []
+
+    for row in rows:
+        file_path = row[0]
+        db_chunk_count = row[1] or 0
+
+        chroma_result = collection.get(
+            where={"file_path": file_path},
+            include=[],  # ids only — fastest
+        )
+        chroma_ids = chroma_result.get("ids", []) if isinstance(chroma_result, dict) else list(chroma_result.ids)
+        chroma_chunk_count = len(chroma_ids)
+
+        if chroma_chunk_count == 0:
+            # Silent write failure — reset so re-ingestion can occur
+            conn.execute(
+                "UPDATE files SET chroma_synced = 0, chunk_count = 0 WHERE file_path = ?",
+                (file_path,),
+            )
+            conn.commit()
+            status = "broken"
+        else:
+            status = "ok"
+
+        results.append(
+            {
+                "file_path": file_path,
+                "db_chunk_count": db_chunk_count,
+                "chroma_chunk_count": chroma_chunk_count,
+                "status": status,
+            }
+        )
+
+    conn.close()
+    return results
+
+
+def reingest_single_file(db_path: str, file_path: str, chroma_dir: str) -> dict:
+    """Chunk and embed a single file; update SQLite chunk_count and chroma_synced."""
+    try:
+        text = _extract_text_for_reingest(file_path)
+        if not text or not text.strip():
+            return {"success": False, "chunk_count": 0, "error": "No text extracted"}
+
+        file_name = os.path.basename(file_path)
+        chunks = chunk_text(text, file_path=file_path, file_name=file_name)
+
+        upsert_document(chunks, persist_dir=chroma_dir)
+
+        chunk_count = len(chunks)
+        conn = get_connection(db_path)
+        conn.execute(
+            "UPDATE files SET chunk_count = ?, chroma_synced = 1 WHERE file_path = ?",
+            (chunk_count, file_path),
+        )
+        conn.commit()
+        conn.close()
+
+        return {"success": True, "chunk_count": chunk_count, "error": ""}
+    except Exception as exc:
+        return {"success": False, "chunk_count": 0, "error": str(exc)}

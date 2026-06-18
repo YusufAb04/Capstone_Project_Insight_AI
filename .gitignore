@@ -1,0 +1,21 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Database (contains indexed document content — keep local only)
+*.db
+
+# ChromaDB binary segment files (must NOT be synced to OneDrive/cloud)
+data/chromadb/
+
+# Exports and backups
+exports/
+backups/
+logs/
+
+# Streamlit cache
+.streamlit/

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
@@ -11,6 +12,12 @@ DEFAULT_OCR_SETTINGS = {
     "ocr_page_limit": "30",
     "ocr_dpi": "220",
     "ocr_min_words_threshold": "30",
+}
+
+DEFAULT_RAG_SETTINGS = {
+    "chroma_persist_dir": "data/chromadb",
+    "ollama_model": "llama3.2:3b",
+    "ollama_base_url": "http://localhost:11434",
 }
 
 
@@ -174,15 +181,24 @@ def init_database(db_path: str) -> None:
         """
     )
 
-    _ensure_column(cur, 'analysis_results', 'content_text', 'content_text TEXT')
-    _ensure_column(cur, 'analysis_results', 'risk_explanation', 'risk_explanation TEXT')
+    # Additive migrations — safe to run on existing databases
+    _ensure_column(cur, "analysis_results", "content_text", "content_text TEXT")
+    _ensure_column(cur, "analysis_results", "risk_explanation", "risk_explanation TEXT")
+
+    # RAG sync tracking columns
+    _ensure_column(cur, "files", "chroma_synced", "chroma_synced INTEGER DEFAULT 0")
+    _ensure_column(cur, "files", "chunk_count", "chunk_count INTEGER DEFAULT 0")
+
+    # LLM enrichment flag
+    _ensure_column(cur, "files", "llm_enriched", "llm_enriched INTEGER DEFAULT 0")
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_files_status ON files(status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_files_chroma ON files(chroma_synced, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_analysis_file_id ON analysis_results(file_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_schedule_enabled_next ON scan_schedules(enabled, next_run_at)")
 
-    for key, value in DEFAULT_OCR_SETTINGS.items():
+    for key, value in {**DEFAULT_OCR_SETTINGS, **DEFAULT_RAG_SETTINGS}.items():
         cur.execute(
             "INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)",
             (key, value),
@@ -214,6 +230,18 @@ def set_setting(db_path: str, key: str, value: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def get_exclusion_keywords(db_path: str) -> list[str]:
+    raw = get_setting(db_path, "exclusion_keywords", "[]")
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+
+
+def set_exclusion_keywords(db_path: str, keywords: list[str]) -> None:
+    set_setting(db_path, "exclusion_keywords", json.dumps(keywords))
 
 
 def backup_database(db_path: str, backup_path: str) -> str:

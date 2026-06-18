@@ -19,6 +19,23 @@ if not exist "data" mkdir data
 if not exist "logs" mkdir logs
 if not exist "exports" mkdir exports
 
+REM ── Start Ollama if not already running ──────────────────────────────────
+echo Checking Ollama...
+curl -s http://localhost:11434 >nul 2>&1
+if %errorlevel%==0 (
+    echo        Ollama already running.
+) else (
+    echo        Starting Ollama...
+    if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
+        start "" "%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+    ) else (
+        where ollama >nul 2>&1 && start "" ollama
+    )
+    timeout /t 5 /nobreak >nul
+    echo        Ollama started.
+)
+echo.
+
 echo Starting Streamlit app...
 call ".venv\Scripts\python.exe" -m streamlit run app.py
 
