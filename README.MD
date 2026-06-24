@@ -1,6 +1,11 @@
 
 # INSIGHT.AI Business Edition
 
+## Overview
+INSIGHT.AI is a secure local/offline document intelligence application. It is designed to help users analyse business documents without uploading confidential data to external cloud AI services.
+The application allows users to upload files, scan local folders, exclude unnecessary or sensitive files, index document content, ask questions over the indexed documents, view an executive dashboard and inspect logs or processing results.
+
+
 Company-pilot version of INSIGHT.AI with:
 - Upload files (TXT, CSV, PDF, DOCX, XLSX)
 - Scan local folder recursively
@@ -37,7 +42,7 @@ Company-pilot version of INSIGHT.AI with:
   - `src/text_cleaner.py`
 
 
-## Run
+## To use the application, simply run the following batch files
 
 ```bash
 setup_all.bat
@@ -46,6 +51,20 @@ setup_all.bat
 ```bash
 run.bat
 ```
+
+<img width="1919" height="1029" alt="Image" src="https://github.com/user-attachments/assets/e776ac53-43b9-445d-a5d7-89f06078362d" />
+
+<img width="1919" height="1031" alt="Image" src="https://github.com/user-attachments/assets/e7dbbf21-6588-47ab-9349-2b5349b2084e" />
+
+<img width="1919" height="1029" alt="Image" src="https://github.com/user-attachments/assets/e46c3ad7-db57-47c9-800a-d565eb034a84" />
+
+<img width="1919" height="1025" alt="Image" src="https://github.com/user-attachments/assets/3e0ba9cc-fb82-4c4b-80ac-9e930a86fce1" />
+
+<img width="1913" height="1004" alt="Image" src="https://github.com/user-attachments/assets/bb41049d-5b47-4542-91eb-0390fbdfa713" />
+
+
+
+
 
 ## Notes
 
