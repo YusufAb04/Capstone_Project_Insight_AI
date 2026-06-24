@@ -54,7 +54,7 @@ run.bat
 
 <img width="1919" height="1029" alt="Image" src="https://github.com/user-attachments/assets/e776ac53-43b9-445d-a5d7-89f06078362d" />
 
-<img width="1909" height="1023" alt="Image" src="https://github.com/user-attachments/assets/dbe08090-7d77-46c8-ace6-627d1e8b2a67" />
+<img width="1902" height="1023" alt="Image" src="https://github.com/user-attachments/assets/c9f4b429-577b-4dd3-89d0-8ecd0356e50e" />
 
 <img width="1919" height="1031" alt="Image" src="https://github.com/user-attachments/assets/e7dbbf21-6588-47ab-9349-2b5349b2084e" />
 
